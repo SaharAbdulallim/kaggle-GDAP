@@ -1,0 +1,9 @@
+[project]
+name = "kaggle-competion-beyond-visible-spectrum-ai-for-agriculture-2026"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "kaggle>=1.8.3",
+]
