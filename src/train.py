@@ -15,10 +15,15 @@ from src.utils import WheatDataModule, seed_everything
 
 
 class MultiModalClassifier(pl.LightningModule):
-    def __init__(self, cfg: CFG, hs_channels: int, num_classes: int = 3):
+    def __init__(self, cfg: CFG, hs_channels: int, num_classes: int = 3,
+                 label_smoothing: float = 0.0, dropout: float = 0.3, 
+                 scheduler_type: str = "cosine"):
         super().__init__()
         self.save_hyperparameters()
         self.cfg = cfg
+        self.label_smoothing = label_smoothing
+        self.dropout = dropout
+        self.scheduler_type = scheduler_type
         
         self.rgb_enc = timm.create_model(cfg.RGB_BACKBONE, pretrained=True, in_chans=3, num_classes=0)
         self.ms_enc = timm.create_model(cfg.MS_BACKBONE, pretrained=False, in_chans=5, num_classes=0)
@@ -26,6 +31,8 @@ class MultiModalClassifier(pl.LightningModule):
         
         total_feat_dim = self.rgb_enc.num_features + self.ms_enc.num_features + self.hs_enc.num_features
         self.classifier = nn.Linear(total_feat_dim, num_classes)
+        
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         
         self.train_acc = Accuracy(task='multiclass', num_classes=num_classes)
         self.val_acc = Accuracy(task='multiclass', num_classes=num_classes)
@@ -42,7 +49,7 @@ class MultiModalClassifier(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
-        loss = F.cross_entropy(logits, y)
+        loss = self.criterion(logits, y)
         self.train_acc(logits, y)
         self.log('train_loss', loss, prog_bar=True)
         self.log('train_acc', self.train_acc, prog_bar=True)
@@ -51,7 +58,7 @@ class MultiModalClassifier(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
-        loss = F.cross_entropy(logits, y)
+        loss = self.criterion(logits, y)
         self.val_acc(logits, y)
         self.val_f1(logits, y)
         self.log('val_loss', loss, prog_bar=True)
@@ -65,8 +72,28 @@ class MultiModalClassifier(pl.LightningModule):
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.cfg.LR, weight_decay=self.cfg.WD)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.cfg.EPOCHS)
-        return [optimizer], [scheduler]
+        
+        if self.scheduler_type == "onecycle":
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=self.cfg.LR,
+                total_steps=self.trainer.estimated_stepping_batches,
+                pct_start=0.3,
+                anneal_strategy='cos'
+            )
+            return {'optimizer': optimizer, 'lr_scheduler': {'scheduler': scheduler, 'interval': 'step'}}
+        elif self.scheduler_type == "plateau":
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='max',
+                factor=0.5,
+                patience=5,
+                verbose=True
+            )
+            return {'optimizer': optimizer, 'lr_scheduler': {'scheduler': scheduler, 'monitor': 'val_f1', 'interval': 'epoch'}}
+        else:  # cosine
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.cfg.EPOCHS)
+            return [optimizer], [scheduler]
 
 
 def main():

@@ -190,18 +190,35 @@ class WheatDataset(Dataset):
 
 
 class WheatDataModule(pl.LightningDataModule):
-    def __init__(self, cfg: CFG):
+    def __init__(self, cfg: CFG, aug_strength: str = "medium"):
         super().__init__()
         self.cfg = cfg
-        
-        self.train_transforms = K.AugmentationSequential(
-            K.RandomHorizontalFlip(p=0.5),
-            K.RandomVerticalFlip(p=0.5),
-            K.RandomRotation(degrees=90.0, p=0.5),
-            K.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1), p=0.3),
-            K.RandomGaussianNoise(mean=0., std=0.03, p=0.2),
-            data_keys=["image"]
-        )
+        self.aug_strength = aug_strength
+        self.train_transforms = self._get_train_transforms()
+    
+    def _get_train_transforms(self):
+        if self.aug_strength == "light":
+            augs = [
+                K.RandomHorizontalFlip(p=0.5),
+                K.RandomVerticalFlip(p=0.5)
+            ]
+        elif self.aug_strength == "medium":
+            augs = [
+                K.RandomHorizontalFlip(p=0.5),
+                K.RandomVerticalFlip(p=0.5),
+                K.RandomRotation(degrees=90.0, p=0.5),
+                K.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1), p=0.3),
+                K.RandomGaussianNoise(mean=0., std=0.03, p=0.2)
+            ]
+        else:  # strong
+            augs = [
+                K.RandomHorizontalFlip(p=0.5),
+                K.RandomVerticalFlip(p=0.5),
+                K.RandomRotation(degrees=90.0, p=0.7),
+                K.RandomAffine(degrees=20, translate=(0.15, 0.15), scale=(0.85, 1.15), p=0.5),
+                K.RandomGaussianNoise(mean=0., std=0.05, p=0.3)
+            ]
+        return K.AugmentationSequential(*augs, data_keys=["image"])
         
     def setup(self, stage=None):
         train_df = make_df(self.cfg.ROOT, self.cfg.TRAIN_DIR)
