@@ -8,9 +8,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
+from torchmetrics import Accuracy, F1Score
 
-from config import CFG, ID2LBL
-from utils import WheatDataModule, seed_everything
+from src.config import CFG, ID2LBL
+from src.utils import WheatDataModule, seed_everything
 
 
 class ConcatModalityClassifier(pl.LightningModule):
@@ -21,9 +22,9 @@ class ConcatModalityClassifier(pl.LightningModule):
         
         self.backbone = timm.create_model(cfg.BACKBONE, pretrained=True, in_chans=in_channels, num_classes=num_classes)
         
-        self.train_acc = pl.metrics.Accuracy(task='multiclass', num_classes=num_classes)
-        self.val_acc = pl.metrics.Accuracy(task='multiclass', num_classes=num_classes)
-        self.val_f1 = pl.metrics.F1Score(task='multiclass', num_classes=num_classes, average='macro')
+        self.train_acc = Accuracy(task='multiclass', num_classes=num_classes)
+        self.val_acc = Accuracy(task='multiclass', num_classes=num_classes)
+        self.val_f1 = F1Score(task='multiclass', num_classes=num_classes, average='macro')
     
     def forward(self, x):
         return self.backbone(x)
@@ -71,9 +72,9 @@ class MultiModalClassifier(pl.LightningModule):
         feat_dim = self.rgb_enc.num_features
         self.classifier = nn.Linear(feat_dim * 3, num_classes)
         
-        self.train_acc = pl.metrics.Accuracy(task='multiclass', num_classes=num_classes)
-        self.val_acc = pl.metrics.Accuracy(task='multiclass', num_classes=num_classes)
-        self.val_f1 = pl.metrics.F1Score(task='multiclass', num_classes=num_classes, average='macro')
+        self.train_acc = Accuracy(task='multiclass', num_classes=num_classes)
+        self.val_acc = Accuracy(task='multiclass', num_classes=num_classes)
+        self.val_f1 = F1Score(task='multiclass', num_classes=num_classes, average='macro')
     
     def forward(self, modalities):
         rgb_feat = self.rgb_enc(modalities["rgb"])

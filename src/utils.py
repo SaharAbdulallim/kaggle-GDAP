@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from config import CFG, ID2LBL, LBL2ID
+from src.config import CFG, ID2LBL, LBL2ID
 
 
 def seed_everything(seed: int):
@@ -155,9 +155,11 @@ class WheatDataset(Dataset):
         
         if self.cfg.USE_HS and pd.notna(row.get("hs")):
             x = read_hs(row["hs"], self.cfg.HS_DROP_FIRST, self.cfg.HS_DROP_LAST)
-            if x.shape[0] != self.hs_ch:
+            if x.shape[0] < self.hs_ch:
                 pad = torch.zeros(self.hs_ch - x.shape[0], *x.shape[1:])
                 x = torch.cat([x, pad], 0)
+            elif x.shape[0] > self.hs_ch:
+                x = x[:self.hs_ch]
             x = resize_tensor(x, self.cfg.IMG_SIZE)
             modalities["hs"] = x
         else:

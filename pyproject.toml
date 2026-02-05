@@ -1,10 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "kaggle-competion-beyond-visible-spectrum-ai-for-agriculture-2026"
-version = "0.1.0"
+name = "gdap_kg"
+version = "0.0.1"
 description = "Add your description here"
-readme = "README.md"
+readme = "Readme.md"
 requires-python = ">=3.12"
 dependencies = [
     "kaggle>=1.8.3",
     "marimo>=0.19.7",
+    "pandas>=3.0.0",
+    "pytorch-lightning>=2.6.1",
+    "timm>=1.0.24",
+    "torch>=2.10.0",
+    "opencv-python>=4.10.0",
+    "tifffile>=2024.9.20",
+    "kornia>=0.7.5",
+    "pyzmq>=27.1.0",
 ]
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
