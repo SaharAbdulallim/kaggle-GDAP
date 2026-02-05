@@ -76,6 +76,26 @@ def main():
     dm = WheatDataModule(cfg)
     dm.setup()
     
+    train_labels = [dm.train_ds.df.iloc[i]['label'] for i in range(len(dm.train_ds))]
+    val_labels = [dm.val_ds.df.iloc[i]['label'] for i in range(len(dm.val_ds))]
+    
+    train_dist = pd.Series(train_labels).value_counts().sort_index()
+    val_dist = pd.Series(val_labels).value_counts().sort_index()
+    
+
+    print("DATASET DISTRIBUTION")
+
+    print(f"\nTrain set ({len(train_labels)} samples):")
+    for label, count in train_dist.items():
+        pct = 100 * count / len(train_labels)
+        print(f"  {label:8s}: {count:4d} ({pct:5.1f}%)")
+    
+    print(f"\nValidation set ({len(val_labels)} samples):")
+    for label, count in val_dist.items():
+        pct = 100 * count / len(val_labels)
+        print(f"  {label:8s}: {count:4d} ({pct:5.1f}%)")
+
+    
     print(f"Mode: MULTIMODAL")
     print(f"Channels: {dm.n_ch} | HS: {dm.hs_ch} | Train: {len(dm.train_ds)} | Val: {len(dm.val_ds)} | Test: {len(dm.test_ds)}")
     

@@ -19,6 +19,9 @@ dependencies = [
     "tifffile>=2024.9.20",
     "kornia>=0.7.5",
     "pyzmq>=27.1.0",
+    "optuna>=4.7.0",
+    "optuna-integration>=4.7.0",
+    "plotly>=6.5.2",
 ]
 
 [tool.uv]

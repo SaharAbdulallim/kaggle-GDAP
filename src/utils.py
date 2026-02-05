@@ -198,6 +198,8 @@ class WheatDataModule(pl.LightningDataModule):
             K.RandomHorizontalFlip(p=0.5),
             K.RandomVerticalFlip(p=0.5),
             K.RandomRotation(degrees=90.0, p=0.5),
+            K.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1), p=0.3),
+            K.RandomGaussianNoise(mean=0., std=0.03, p=0.2),
             data_keys=["image"]
         )
         
