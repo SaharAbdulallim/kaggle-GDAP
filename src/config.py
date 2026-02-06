@@ -11,12 +11,18 @@ class CFG:
     USE_MS: bool = True
     USE_HS: bool = True
     
+    # Hyperparameters
     IMG_SIZE: int = 64
     BATCH_SIZE: int = 128
     EPOCHS: int = 100
     LR: float = 2e-4
     WD: float = 0.05
-    
+    LABEL_SMOOTHING: float = 0.13396786789053855
+    DROPOUT: float = 0.44921894226882936
+    SCHEDULER_TYPE: str = "onecycle"  # options: "cosine", "onecycle", "step"
+    AUG_STRENGTH: str = "medium"  # options: "light", "medium", "strong"
+
+
     NUM_WORKERS: int = 4
     SEED: int = 3557
     

@@ -43,8 +43,17 @@ def _(CFG, os, seed_everything):
     cfg.TRAIN_DIR = "train"
     cfg.VAL_DIR = "test"
     cfg.OUT_DIR = "./outputs"
+
+
     cfg.EPOCHS = 50
-    cfg.BATCH_SIZE = 32
+    cfg.IMG_SIZE = 224
+    cfg.BATCH_SIZE = 64
+    cfg.LR = 0.00023125569665524058
+    cfg.WD = 0.044560031865346926
+    cfg.LABEL_SMOOTHING=0.13396786789053855
+    cfg.DROPOUT=0.44921894226882936
+    cfg.SCHEDULER_TYPE='onecycle'
+    cfg.AUG_STRENGTH='medium'
 
     cfg.RGB_BACKBONE = "efficientnet_b0"
     cfg.MS_BACKBONE = "efficientnet_b0"
@@ -52,7 +61,13 @@ def _(CFG, os, seed_everything):
 
 
     cfg.WANDB_ENABLED= True
-    cfg.WANDB_RUN_NAME = 'single_linear_model'
+    cfg.WANDB_RUN_NAME = 'hyperparam_tuned'
+
+
+
+    # Best params: {'img_size': 224, 'lr': 0.00023125569665524058, 'wd': 0.044560031865346926, 'batch_size': 64, 'label_smoothing': 0.13396786789053855, 'dropout': 0.44921894226882936, 'scheduler': 'onecycle', 'aug_strength': 'medium'}
+
+
 
     seed_everything(cfg.SEED)
     os.makedirs(cfg.OUT_DIR, exist_ok=True)
@@ -125,13 +140,9 @@ def _(dm, model, trainer):
 
 
 @app.cell
-def _(checkpoint_cb, trainer):
-    print(f"\nBest model: {checkpoint_cb.best_model_path}")
+def _(checkpoint_cb):
+    print(f"Best model: {checkpoint_cb.best_model_path}")
     print(f"Best validation F1: {checkpoint_cb.best_model_score:.4f}")
-
-    metrics = trainer.callback_metrics
-    print(f"\nFinal validation accuracy: {metrics['val_acc']:.4f}")
-    print(f"Final validation F1: {metrics['val_f1']:.4f}")
     return
 
 
