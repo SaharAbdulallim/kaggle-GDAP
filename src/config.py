@@ -33,6 +33,7 @@ class CFG:
     LR: float = 0.001
     WD: float = 0.02
     LABEL_SMOOTHING: float = 0.05
+    FOCAL_GAMMA: float = 2.0
     DROPOUT: float = 0.4
     MIXUP_ALPHA: float = 0.2
     

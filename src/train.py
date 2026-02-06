@@ -5,14 +5,27 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from sklearn.model_selection import StratifiedKFold
 from torchmetrics import Accuracy, F1Score
 
-from src.config import CFG, ID2LBL
+from src.config import CFG, ID2LBL, LABELS
 from src.models import MultiModalClassifier
 from src.utils import seed_everything
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2.0, label_smoothing=0.0):
+        super().__init__()
+        self.gamma = gamma
+        self.label_smoothing = label_smoothing
+
+    def forward(self, logits, targets):
+        ce = F.cross_entropy(logits, targets, reduction='none', label_smoothing=self.label_smoothing)
+        pt = torch.exp(-ce)
+        return ((1 - pt) ** self.gamma * ce).mean()
 
 torch.set_float32_matmul_precision('medium')
 
@@ -41,7 +54,7 @@ class WheatClassifier(pl.LightningModule):
         self.cfg = cfg
         
         self.model = MultiModalClassifier(cfg, hs_channels, num_classes)
-        self.criterion = nn.CrossEntropyLoss(label_smoothing=cfg.LABEL_SMOOTHING)
+        self.criterion = FocalLoss(gamma=cfg.FOCAL_GAMMA, label_smoothing=cfg.LABEL_SMOOTHING)
         
         self.train_acc = Accuracy(task='multiclass', num_classes=num_classes)
         self.train_f1 = F1Score(task='multiclass', num_classes=num_classes, average='macro')
@@ -83,7 +96,7 @@ class WheatClassifier(pl.LightningModule):
         self.log('val_loss', loss, prog_bar=True)
         self.log('val_acc', self.val_acc, prog_bar=True)
         self.log('val_f1', self.val_f1, prog_bar=True)
-    
+
     def predict_step(self, batch, batch_idx):
         x, ids = batch
         logits = self(x)
@@ -91,8 +104,8 @@ class WheatClassifier(pl.LightningModule):
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.cfg.LR, weight_decay=self.cfg.WD)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=7, min_lr=1e-6)
-        return {'optimizer': optimizer, 'lr_scheduler': {'scheduler': scheduler, 'monitor': 'val_f1', 'interval': 'epoch'}}
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
+        return {'optimizer': optimizer, 'lr_scheduler': {'scheduler': scheduler, 'interval': 'epoch'}}
 
 
 def main():
