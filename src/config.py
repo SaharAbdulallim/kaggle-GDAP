@@ -29,10 +29,10 @@ class CFG:
     IMG_SIZE: int = 64
     BATCH_SIZE: int = 64
     EPOCHS: int = 100
-    LR: float = 2e-4
-    WD: float = 0.05
+    LR: float = 0.0001
+    WD: float = 0.02
     LABEL_SMOOTHING: float = 0.1
-    DROPOUT: float = 0.5
+    DROPOUT: float = 0.6
     MIXUP_ALPHA: float = 0.2
     
     NUM_WORKERS: int = 4

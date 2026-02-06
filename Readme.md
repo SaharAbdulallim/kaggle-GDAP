@@ -8,7 +8,7 @@ Classify wheat into 3 classes (Healthy/Rust/Other) using multimodal remote sensi
 
 - RGB: 3 channels (visible)
 - Multispectral (MS): 5 channels (visible + NIR)
-- Hyperspectral (HS): 101 channels (400-1000nm)
+- Hyperspectral (HS): 101 channels (400-1000nm) ( After filtering noise channels , 10 first 14 last)
 
 ## Implementation Approach
 
