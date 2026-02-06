@@ -1,141 +1,66 @@
 import os
 
+import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
-import timm
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from torchmetrics import Accuracy, F1Score
 
-import wandb
 from src.config import CFG, ID2LBL
+from src.models import MultiModalClassifier
 from src.utils import WheatDataModule, seed_everything
 
-
-class AttentionFusion(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.query = nn.Linear(dim, dim)
-        self.key = nn.Linear(dim, dim)
-        self.value = nn.Linear(dim, dim)
-        self.scale = dim ** -0.5
-        
-    def forward(self, x):
-        B, N, D = x.shape
-        q = self.query(x)
-        k = self.key(x)
-        v = self.value(x)
-        
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-        out = (attn @ v).mean(dim=1)
-        return out
+torch.set_float32_matmul_precision('medium')
 
 
-class BilinearFusion(nn.Module):
-    def __init__(self, dim1, dim2, out_dim, reduce_dim=256):
-        super().__init__()
-        self.proj1 = nn.Linear(dim1, reduce_dim)
-        self.proj2 = nn.Linear(dim2, reduce_dim)
-        self.bilinear = nn.Bilinear(reduce_dim, reduce_dim, out_dim)
-        
-    def forward(self, x1, x2):
-        x1 = self.proj1(x1)
-        x2 = self.proj2(x2)
-        return self.bilinear(x1, x2)
+def mixup_data(x, y, alpha=0.2):
+    """Apply mixup augmentation to batch."""
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.0
+    
+    batch_size = len(y)
+    index = torch.randperm(batch_size, device=y.device)
+    
+    mixed_x = {}
+    for key in x:
+        mixed_x[key] = lam * x[key] + (1 - lam) * x[key][index]
+    
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
 
 
-class TransformerFusion(nn.Module):
-    def __init__(self, dim, num_heads=4):
-        super().__init__()
-        self.attn = nn.MultiheadAttention(dim, num_heads, batch_first=True)
-        self.norm = nn.LayerNorm(dim)
-        
-    def forward(self, x):
-        x = self.norm(x)
-        out, _ = self.attn(x, x, x)
-        return out.mean(dim=1)
-
-
-class MultiModalClassifier(pl.LightningModule):
+class WheatClassifier(pl.LightningModule):
     def __init__(self, cfg: CFG, hs_channels: int, num_classes: int = 3):
         super().__init__()
         self.save_hyperparameters()
         self.cfg = cfg
         
-        rgb_pretrained = cfg.RGB_PRETRAINED_WEIGHTS if cfg.RGB_PRETRAINED_WEIGHTS != "imagenet" else True
-        self.rgb_enc = timm.create_model(cfg.RGB_BACKBONE, pretrained=rgb_pretrained, in_chans=3, num_classes=0)
-        self.ms_enc = timm.create_model(cfg.MS_BACKBONE, pretrained=False, in_chans=5, num_classes=0)
-        self.hs_enc = timm.create_model(cfg.HS_BACKBONE, pretrained=False, in_chans=hs_channels, num_classes=0)
-        
-        rgb_dim = self.rgb_enc.num_features
-        ms_dim = self.ms_enc.num_features
-        hs_dim = self.hs_enc.num_features
-        
-        if cfg.FUSION_TYPE == "attention":
-            max_dim = max(rgb_dim, ms_dim, hs_dim)
-            self.rgb_proj = nn.Linear(rgb_dim, max_dim) if rgb_dim != max_dim else nn.Identity()
-            self.ms_proj = nn.Linear(ms_dim, max_dim) if ms_dim != max_dim else nn.Identity()
-            self.hs_proj = nn.Linear(hs_dim, max_dim) if hs_dim != max_dim else nn.Identity()
-            self.fusion = AttentionFusion(max_dim)
-            self.dropout = nn.Dropout(cfg.DROPOUT)
-            self.classifier = nn.Linear(max_dim, num_classes)
-        elif cfg.FUSION_TYPE == "bilinear":
-            self.fusion = BilinearFusion(rgb_dim + ms_dim, hs_dim, 512)
-            self.dropout = nn.Dropout(cfg.DROPOUT)
-            self.classifier = nn.Linear(512, num_classes)
-        elif cfg.FUSION_TYPE == "transformer":
-            max_dim = max(rgb_dim, ms_dim, hs_dim)
-            self.rgb_proj = nn.Linear(rgb_dim, max_dim) if rgb_dim != max_dim else nn.Identity()
-            self.ms_proj = nn.Linear(ms_dim, max_dim) if ms_dim != max_dim else nn.Identity()
-            self.hs_proj = nn.Linear(hs_dim, max_dim) if hs_dim != max_dim else nn.Identity()
-            self.fusion = TransformerFusion(max_dim)
-            self.dropout = nn.Dropout(cfg.DROPOUT)
-            self.classifier = nn.Linear(max_dim, num_classes)
-        else:  # concat
-            total_feat_dim = rgb_dim + ms_dim + hs_dim
-            self.dropout = nn.Dropout(cfg.DROPOUT)
-            self.classifier = nn.Linear(total_feat_dim, num_classes)
-        
+        self.model = MultiModalClassifier(cfg, hs_channels, num_classes)
         self.criterion = nn.CrossEntropyLoss(label_smoothing=cfg.LABEL_SMOOTHING)
         
         self.train_acc = Accuracy(task='multiclass', num_classes=num_classes)
         self.val_acc = Accuracy(task='multiclass', num_classes=num_classes)
         self.val_f1 = F1Score(task='multiclass', num_classes=num_classes, average='macro')
     
-    def forward(self, modalities):
-        rgb_feat = self.rgb_enc(modalities["rgb"])
-        ms_feat = self.ms_enc(modalities["ms"])
-        hs_feat = self.hs_enc(modalities["hs"])
-        
-        if self.cfg.FUSION_TYPE == "attention":
-            rgb_feat = self.rgb_proj(rgb_feat)
-            ms_feat = self.ms_proj(ms_feat)
-            hs_feat = self.hs_proj(hs_feat)
-            stacked = torch.stack([rgb_feat, ms_feat, hs_feat], dim=1)
-            fused = self.fusion(stacked)
-        elif self.cfg.FUSION_TYPE == "bilinear":
-            combined = torch.cat([rgb_feat, ms_feat], dim=1)
-            fused = self.fusion(combined, hs_feat)
-        elif self.cfg.FUSION_TYPE == "transformer":
-            rgb_feat = self.rgb_proj(rgb_feat)
-            ms_feat = self.ms_proj(ms_feat)
-            hs_feat = self.hs_proj(hs_feat)
-            stacked = torch.stack([rgb_feat, ms_feat, hs_feat], dim=1)
-            fused = self.fusion(stacked)
-        else:  # concat
-            fused = torch.cat([rgb_feat, ms_feat, hs_feat], dim=1)
-        
-        fused = self.dropout(fused)
-        return self.classifier(fused)
+    def forward(self, x):
+        return self.model(x)
     
     def training_step(self, batch, batch_idx):
         x, y = batch
-        logits = self(x)
-        loss = self.criterion(logits, y)
+        
+        if self.cfg.MIXUP_ALPHA > 0 and self.training:
+            x_mixed, y_a, y_b, lam = mixup_data(x, y, self.cfg.MIXUP_ALPHA)
+            logits = self(x_mixed)
+            loss = lam * self.criterion(logits, y_a) + (1 - lam) * self.criterion(logits, y_b)
+        else:
+            logits = self(x)
+            loss = self.criterion(logits, y)
+        
         self.train_acc(logits, y)
         self.log('train_loss', loss, prog_bar=True)
         self.log('train_acc', self.train_acc, prog_bar=True)
@@ -145,6 +70,7 @@ class MultiModalClassifier(pl.LightningModule):
         x, y = batch
         logits = self(x)
         loss = self.criterion(logits, y)
+        
         self.val_acc(logits, y)
         self.val_f1(logits, y)
         self.log('val_loss', loss, prog_bar=True)
@@ -157,29 +83,28 @@ class MultiModalClassifier(pl.LightningModule):
         return {'ids': ids, 'preds': logits.argmax(1)}
     
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.cfg.LR, weight_decay=self.cfg.WD)
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.cfg.LR,
+            weight_decay=self.cfg.WD
+        )
         
-        if self.cfg.SCHEDULER_TYPE == "onecycle":
-            scheduler = torch.optim.lr_scheduler.OneCycleLR(
-                optimizer,
-                max_lr=self.cfg.LR,
-                total_steps=self.trainer.estimated_stepping_batches,
-                pct_start=0.3,
-                anneal_strategy='cos'
-            )
-            return {'optimizer': optimizer, 'lr_scheduler': {'scheduler': scheduler, 'interval': 'step'}}
-        elif self.cfg.SCHEDULER_TYPE == "plateau":
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode='max',
-                factor=0.5,
-                patience=5,
-                verbose=True
-            )
-            return {'optimizer': optimizer, 'lr_scheduler': {'scheduler': scheduler, 'monitor': 'val_f1', 'interval': 'epoch'}}
-        else:  # cosine
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.cfg.EPOCHS)
-            return [optimizer], [scheduler]
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='max',
+            factor=0.5,
+            patience=7,
+            min_lr=1e-6
+        )
+        
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'monitor': 'val_f1',
+                'interval': 'epoch'
+            }
+        }
 
 
 def main():
@@ -190,30 +115,8 @@ def main():
     dm = WheatDataModule(cfg)
     dm.setup()
     
-    train_labels = [dm.train_ds.df.iloc[i]['label'] for i in range(len(dm.train_ds))]
-    val_labels = [dm.val_ds.df.iloc[i]['label'] for i in range(len(dm.val_ds))]
-    
-    train_dist = pd.Series(train_labels).value_counts().sort_index()
-    val_dist = pd.Series(val_labels).value_counts().sort_index()
-    
-
-    print("DATASET DISTRIBUTION")
-
-    print(f"\nTrain set ({len(train_labels)} samples):")
-    for label, count in train_dist.items():
-        pct = 100 * count / len(train_labels)
-        print(f"  {label:8s}: {count:4d} ({pct:5.1f}%)")
-    
-    print(f"\nValidation set ({len(val_labels)} samples):")
-    for label, count in val_dist.items():
-        pct = 100 * count / len(val_labels)
-        print(f"  {label:8s}: {count:4d} ({pct:5.1f}%)")
-
-    
-    print(f"Mode: MULTIMODAL")
-    print(f"Channels: {dm.n_ch} | HS: {dm.hs_ch} | Train: {len(dm.train_ds)} | Val: {len(dm.val_ds)} | Test: {len(dm.test_ds)}")
-    
-    model = MultiModalClassifier(cfg, hs_channels=dm.hs_ch, num_classes=3)
+    model = WheatClassifier(cfg, hs_channels=dm.hs_ch, num_classes=3)
+    print(f"Train: {len(dm.train_ds)} | Val: {len(dm.val_ds)} | Test: {len(dm.test_ds)} | HS: {dm.hs_ch} channels")
     
     checkpoint_cb = ModelCheckpoint(
         dirpath=cfg.OUT_DIR,
@@ -224,11 +127,12 @@ def main():
     )
     
     early_stop_cb = EarlyStopping(monitor='val_f1', patience=15, mode='max')
+    
     logger = False
     if cfg.WANDB_ENABLED:
-        print("Using Weights & Biases for logging")
+        print("Logging with Weights & Biases")
         logger = WandbLogger(project=cfg.WANDB_PROJECT_NAME, name=cfg.WANDB_RUN_NAME)
- 
+    
     trainer = pl.Trainer(
         max_epochs=cfg.EPOCHS,
         accelerator='auto',
@@ -240,7 +144,11 @@ def main():
     )
     
     trainer.fit(model, dm)
+    print(f"Best val_f1: {checkpoint_cb.best_model_score:.4f}")
+    print(f"Best model: {checkpoint_cb.best_model_path}")
+    print(f"{'='*60}\n")
     
+    print("Generating predictions...")
     test_preds = trainer.predict(model, dm.test_dataloader(), ckpt_path='best')
     ids = [item for batch in test_preds for item in batch['ids']]
     preds = torch.cat([batch['preds'] for batch in test_preds]).cpu().numpy()
@@ -250,9 +158,9 @@ def main():
                for i in range(len(dm.test_df))],
         'Category': [ID2LBL[p] for p in preds]
     })
-    sub.to_csv(os.path.join(cfg.OUT_DIR, 'submission.csv'), index=False)
-    print(f"Submission saved: {os.path.join(cfg.OUT_DIR, 'submission.csv')}")
-    print(f"Best model: {checkpoint_cb.best_model_path}")
+    sub_path = os.path.join(cfg.OUT_DIR, 'submission.csv')
+    sub.to_csv(sub_path, index=False)
+    print(f"Submission saved: {sub_path}")
 
 
 if __name__ == "__main__":

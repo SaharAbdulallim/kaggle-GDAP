@@ -1,4 +1,9 @@
+import os
+
+import joblib
+import numpy as np
 import torch
+from sklearn.decomposition import PCA
 from tqdm import tqdm
 
 from src.utils import (
@@ -11,7 +16,7 @@ from src.utils import (
 )
 
 
-def calculate_stats(cfg, verbose=True):
+def calculate_stats(cfg, verbose=True, fit_pca=False, pca_path="pca_hs.pkl"):
     train_df = make_df(cfg.ROOT, cfg.TRAIN_DIR)
     train_df, _ = stratified_holdout(train_df, frac=0.1, seed=cfg.SEED)
     
@@ -54,21 +59,41 @@ def calculate_stats(cfg, verbose=True):
         hs_tensor = torch.stack(hs_padded)
         stats['hs_mean'] = tuple(hs_tensor.mean(dim=[0, 2, 3]).tolist())
         stats['hs_std'] = tuple(hs_tensor.std(dim=[0, 2, 3]).tolist())
-    
-    if verbose:
-        print("Calculated Statistics:")
-
-        if 'rgb_mean' in stats:
-            print(f"\nRGB_MEAN: tuple = {stats['rgb_mean']}")
-            print(f"RGB_STD: tuple = {stats['rgb_std']}")
-        if 'ms_mean' in stats:
-            print(f"\nMS_MEAN: tuple = {stats['ms_mean']}")
-            print(f"MS_STD: tuple = {stats['ms_std']}")
-        if 'hs_mean' in stats:
-            print(f"\nHS_MEAN: tuple = {stats['hs_mean']}")
-            print(f"HS_STD: tuple = {stats['hs_std']}")
-
-        print("ImageNet default stats (0.485, 0.456, 0.406), (0.229, 0.224, 0.225) recommended for RGB with pretrained weights.")
+        stats['hs_channels'] = hs_max_ch
+        
+        if fit_pca and hasattr(cfg, 'PCA_COMPONENTS') and cfg.PCA_COMPONENTS > 0:
+            if verbose:
+                print(f"\nFitting PCA: {hs_max_ch} channels → {cfg.PCA_COMPONENTS} components...")
+            
+            hs_flat = hs_tensor.permute(0, 2, 3, 1).reshape(-1, hs_max_ch).numpy()
+            pca = PCA(n_components=cfg.PCA_COMPONENTS)
+            pca.n_features_expected = hs_max_ch
+            pca.fit(hs_flat)
+            
+            explained_var = pca.explained_variance_ratio_.sum()
+            if verbose:
+                print(f"Explained variance: {explained_var:.2%}")
+            
+            hs_pca = pca.transform(hs_flat).reshape(len(hs_tensor), cfg.IMG_SIZE, cfg.IMG_SIZE, cfg.PCA_COMPONENTS)
+            hs_pca_tensor = torch.from_numpy(hs_pca).permute(0, 3, 1, 2).float()
+            
+            os.makedirs(os.path.dirname(pca_path) if os.path.dirname(pca_path) else '.', exist_ok=True)
+            pca_data = {
+                'model': pca,
+                'n_features': hs_max_ch,
+                'ms_mean': stats.get('ms_mean'),
+                'ms_std': stats.get('ms_std'),
+                'hs_pca_mean': tuple(hs_pca_tensor.mean(dim=[0, 2, 3]).tolist()),
+                'hs_pca_std': tuple(hs_pca_tensor.std(dim=[0, 2, 3]).tolist()),
+                'pca_explained_variance': float(explained_var)
+            }
+            joblib.dump(pca_data, pca_path)
+            if verbose:
+                print(f"PCA saved: {pca_path} | Variance: {explained_var:.1%}")
+            
+            stats['hs_pca_mean'] = pca_data['hs_pca_mean']
+            stats['hs_pca_std'] = pca_data['hs_pca_std']
+            stats['pca_explained_variance'] = pca_data['pca_explained_variance']
     
     return stats
 
@@ -78,4 +103,5 @@ if __name__ == "__main__":
     cfg = CFG()
     cfg.ROOT = "./data"
     cfg.TRAIN_DIR = "train"
-    calculate_stats(cfg)
+    cfg.PCA_COMPONENTS = 20
+    calculate_stats(cfg, fit_pca=True, pca_path="./outputs/pca_hs.pkl")

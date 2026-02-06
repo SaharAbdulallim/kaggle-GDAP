@@ -4,6 +4,7 @@ import re
 from typing import Dict, Optional
 
 import cv2
+import joblib
 import kornia.augmentation as K
 import numpy as np
 import pandas as pd
@@ -11,6 +12,7 @@ import pytorch_lightning as pl
 import tifffile as tiff
 import torch
 import torch.nn.functional as F
+from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader, Dataset
 
 from src.config import CFG, ID2LBL, LBL2ID
@@ -121,15 +123,23 @@ def infer_hs_channels(df: pd.DataFrame, cfg: CFG) -> int:
 
 
 class WheatDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, cfg: CFG, hs_ch: int, transforms=None):
+    def __init__(self, df: pd.DataFrame, cfg: CFG, hs_ch: int, transforms=None, pca_model=None, pca_n_features=None):
         self.df = df.reset_index(drop=True)
         self.cfg = cfg
         self.hs_ch = hs_ch
         self.transforms = transforms
+        self.pca_model = pca_model
+        self.pca_n_features = pca_n_features if pca_n_features is not None else hs_ch
+        self.pca_n_features = pca_n_features if pca_n_features is not None else hs_ch
         
         self.rgb_ch = 3 if cfg.USE_RGB else 0
         self.ms_ch = 5 if cfg.USE_MS else 0
-        self.hs_ch_used = hs_ch if cfg.USE_HS else 0
+        
+        if pca_model is not None and cfg.USE_HS:
+            self.hs_ch_used = cfg.PCA_COMPONENTS
+        else:
+            self.hs_ch_used = hs_ch if cfg.USE_HS else 0
+        
         self.total_ch = self.rgb_ch + self.ms_ch + self.hs_ch_used
     
     def __len__(self):
@@ -154,12 +164,27 @@ class WheatDataset(Dataset):
         
         if self.cfg.USE_HS and pd.notna(row.get("hs")):
             x = read_hs(row["hs"], self.cfg.HS_DROP_FIRST, self.cfg.HS_DROP_LAST)
-            if x.shape[0] < self.hs_ch:
-                pad = torch.zeros(self.hs_ch - x.shape[0], *x.shape[1:])
-                x = torch.cat([x, pad], 0)
-            elif x.shape[0] > self.hs_ch:
-                x = x[:self.hs_ch]
-            x = resize_tensor(x, self.cfg.IMG_SIZE)
+            
+            if self.pca_model is not None:
+                target_ch = self.pca_n_features
+                if x.shape[0] < target_ch:
+                    pad = torch.zeros(target_ch - x.shape[0], *x.shape[1:])
+                    x = torch.cat([x, pad], 0)
+                elif x.shape[0] > target_ch:
+                    x = x[:target_ch]
+                x = resize_tensor(x, self.cfg.IMG_SIZE)
+                C, H, W = x.shape
+                x_flat = x.permute(1, 2, 0).reshape(-1, C).numpy()
+                x_pca = self.pca_model.transform(x_flat)
+                x = torch.from_numpy(x_pca.reshape(H, W, self.cfg.PCA_COMPONENTS)).permute(2, 0, 1).float()
+            else:
+                if x.shape[0] < self.hs_ch:
+                    pad = torch.zeros(self.hs_ch - x.shape[0], *x.shape[1:])
+                    x = torch.cat([x, pad], 0)
+                elif x.shape[0] > self.hs_ch:
+                    x = x[:self.hs_ch]
+                x = resize_tensor(x, self.cfg.IMG_SIZE)
+            
             modalities["hs"] = x
         else:
             modalities["hs"] = None
@@ -175,14 +200,14 @@ class WheatDataset(Dataset):
         if modalities["ms"] is None:
             modalities["ms"] = torch.zeros(5, self.cfg.IMG_SIZE, self.cfg.IMG_SIZE)
         if modalities["hs"] is None:
-            modalities["hs"] = torch.zeros(self.hs_ch, self.cfg.IMG_SIZE, self.cfg.IMG_SIZE)
+            modalities["hs"] = torch.zeros(self.hs_ch_used, self.cfg.IMG_SIZE, self.cfg.IMG_SIZE)
         
         if self.transforms:
             stacked = torch.cat([modalities["rgb"], modalities["ms"], modalities["hs"]], 0)
             stacked = self.transforms(stacked.unsqueeze(0)).squeeze(0)
             modalities["rgb"] = stacked[:3]
             modalities["ms"] = stacked[3:8]
-            modalities["hs"] = stacked[8:]
+            modalities["hs"] = stacked[8:8+self.hs_ch_used]
         
         if self.cfg.RGB_MEAN is not None and self.cfg.RGB_STD is not None:
             mean = torch.tensor(self.cfg.RGB_MEAN).view(3, 1, 1)
@@ -195,10 +220,10 @@ class WheatDataset(Dataset):
             modalities["ms"] = (modalities["ms"] - mean) / std
         
         if self.cfg.HS_MEAN is not None and self.cfg.HS_STD is not None:
-            hs_mean = torch.tensor(self.cfg.HS_MEAN)[:self.hs_ch]
-            hs_std = torch.tensor(self.cfg.HS_STD)[:self.hs_ch]
-            mean = hs_mean.view(self.hs_ch, 1, 1)
-            std = hs_std.view(self.hs_ch, 1, 1)
+            hs_mean = torch.tensor(self.cfg.HS_MEAN)[:self.hs_ch_used]
+            hs_std = torch.tensor(self.cfg.HS_STD)[:self.hs_ch_used]
+            mean = hs_mean.view(self.hs_ch_used, 1, 1)
+            std = hs_std.view(self.hs_ch_used, 1, 1)
             modalities["hs"] = (modalities["hs"] - mean) / std
         
         if "label" in row:
@@ -207,34 +232,19 @@ class WheatDataset(Dataset):
 
 
 class WheatDataModule(pl.LightningDataModule):
-    def __init__(self, cfg: CFG, aug_strength: str = "medium"):
+    def __init__(self, cfg: CFG):
         super().__init__()
         self.cfg = cfg
-        self.aug_strength = aug_strength
         self.train_transforms = self._get_train_transforms()
     
     def _get_train_transforms(self):
-        if self.aug_strength == "light":
-            augs = [
-                K.RandomHorizontalFlip(p=0.5),
-                K.RandomVerticalFlip(p=0.5)
-            ]
-        elif self.aug_strength == "medium":
-            augs = [
-                K.RandomHorizontalFlip(p=0.5),
-                K.RandomVerticalFlip(p=0.5),
-                K.RandomRotation(degrees=90.0, p=0.5),
-                K.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1), p=0.3),
-                K.RandomGaussianNoise(mean=0., std=0.03, p=0.2)
-            ]
-        else:  # strong
-            augs = [
-                K.RandomHorizontalFlip(p=0.5),
-                K.RandomVerticalFlip(p=0.5),
-                K.RandomRotation(degrees=90.0, p=0.7),
-                K.RandomAffine(degrees=20, translate=(0.15, 0.15), scale=(0.85, 1.15), p=0.5),
-                K.RandomGaussianNoise(mean=0., std=0.05, p=0.3)
-            ]
+        augs = [
+            K.RandomHorizontalFlip(p=0.5),
+            K.RandomVerticalFlip(p=0.5),
+            K.RandomRotation(degrees=90.0, p=0.5),
+            K.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1), p=0.3),
+            K.RandomGaussianNoise(mean=0., std=0.03, p=0.2)
+        ]
         return K.AugmentationSequential(*augs, data_keys=["image"])
         
     def setup(self, stage=None):
@@ -242,13 +252,34 @@ class WheatDataModule(pl.LightningDataModule):
         self.test_df = make_df(self.cfg.ROOT, self.cfg.VAL_DIR)
         
         self.hs_ch = infer_hs_channels(train_df, self.cfg)
-        self.n_ch = (3 if self.cfg.USE_RGB else 0) + (5 if self.cfg.USE_MS else 0) + (self.hs_ch if self.cfg.USE_HS else 0)
+        
+        pca_model = None
+        pca_n_features = None
+        if self.cfg.PCA_COMPONENTS > 0 and self.cfg.USE_HS:
+            if os.path.exists(self.cfg.PCA_PATH):
+                pca_data = joblib.load(self.cfg.PCA_PATH)
+                if isinstance(pca_data, dict):
+                    pca_model = pca_data['model']
+                    pca_n_features = pca_data['n_features']
+                else:
+                    pca_model = pca_data
+                    pca_n_features = getattr(pca_model, 'n_features_expected', self.hs_ch)
+                hs_ch_out = self.cfg.PCA_COMPONENTS
+            else:
+                print(f"Warning: PCA not found at {self.cfg.PCA_PATH}. Run stats.py first.")
+                hs_ch_out = self.hs_ch
+        else:
+            hs_ch_out = self.hs_ch
+        
+        self.n_ch = (3 if self.cfg.USE_RGB else 0) + (5 if self.cfg.USE_MS else 0) + (hs_ch_out if self.cfg.USE_HS else 0)
         
         df_tr, df_va = stratified_holdout(train_df, frac=0.1, seed=self.cfg.SEED)
         
-        self.train_ds = WheatDataset(df_tr, self.cfg, self.hs_ch, transforms=self.train_transforms)
-        self.val_ds = WheatDataset(df_va, self.cfg, self.hs_ch, transforms=None)
-        self.test_ds = WheatDataset(self.test_df, self.cfg, self.hs_ch, transforms=None)
+        self.train_ds = WheatDataset(df_tr, self.cfg, self.hs_ch, transforms=self.train_transforms, pca_model=pca_model, pca_n_features=pca_n_features)
+        self.val_ds = WheatDataset(df_va, self.cfg, self.hs_ch, transforms=None, pca_model=pca_model, pca_n_features=pca_n_features)
+        self.test_ds = WheatDataset(self.test_df, self.cfg, self.hs_ch, transforms=None, pca_model=pca_model, pca_n_features=pca_n_features)
+        
+        self.hs_ch = hs_ch_out
     
     def train_dataloader(self):
         return DataLoader(self.train_ds, batch_size=self.cfg.BATCH_SIZE, shuffle=True,
