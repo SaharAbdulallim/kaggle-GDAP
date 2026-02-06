@@ -19,8 +19,9 @@ class CFG:
     RGB_PRETRAINED: bool = True
     RGB_FREEZE_ENCODER: bool = True
     
-    # NDVI for Multispectral (bands: Blue=0, Green=1, Red=2, RedEdge=3, NIR=4)
+    # Spectral indices (bands: Blue=0, Green=1, Red=2, RedEdge=3, NIR=4)
     MS_ADD_NDVI: bool = True
+    MS_ADD_NDRE: bool = True
     
     # PCA for Hyperspectral
     PCA_COMPONENTS: int = 20
@@ -49,8 +50,8 @@ class CFG:
     RGB_STD: tuple = (0.229, 0.224, 0.225)
     
     # MS/HS stats computed from training data - update after running stats.py
-    MS_MEAN: tuple = (0.382, 0.404, 0.378, 0.397, 0.393, 0.500)
-    MS_STD: tuple = (0.211, 0.208, 0.211, 0.207, 0.208, 0.250)
+    MS_MEAN: tuple = (0.382, 0.404, 0.378, 0.397, 0.393, 0.500, 0.500)
+    MS_STD: tuple = (0.211, 0.208, 0.211, 0.207, 0.208, 0.250, 0.250)
     
     # HS PCA stats (20 components) - update after running stats.py with PCA
     HS_MEAN: tuple = (-0.000003, -0.000006, -0.000005, -0.000001, 0.000004,

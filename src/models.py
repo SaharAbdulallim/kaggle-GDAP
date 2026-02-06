@@ -66,7 +66,7 @@ class MultiModalClassifier(nn.Module):
             feat_dims.append(256)
         
         if self.use_ms:
-            ms_ch = 6 if cfg.MS_ADD_NDVI else 5
+            ms_ch = 5 + cfg.MS_ADD_NDVI + cfg.MS_ADD_NDRE
             self.ms_attention = SpectralAttention(ms_ch)
             self.ms_encoder = timm.create_model(
                 cfg.MS_BACKBONE,

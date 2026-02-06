@@ -102,25 +102,35 @@ def normalize_per_band_minmax(x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 
 
 # MS bands: Blue=0, Green=1, Red=2, RedEdge=3, NIR=4
-_MS_NIR, _MS_RED = 4, 2
+_MS_NIR, _MS_RED, _MS_RED_EDGE = 4, 2, 3
 
 
-def compute_ndvi(arr: np.ndarray, eps: float = 1e-6) -> np.ndarray:
-    nir = arr[:, :, _MS_NIR].astype(np.float32)
-    red = arr[:, :, _MS_RED].astype(np.float32)
-    ndvi = (nir - red) / (nir + red + eps)
-    ndvi = np.clip((ndvi + 1.0) / 2.0, 0.0, 1.0)  # map [-1,1] -> [0,1]
-    return ndvi[:, :, np.newaxis]
+def _normalized_diff(arr: np.ndarray, b1: int, b2: int, eps: float = 1e-6) -> np.ndarray:
+    a = arr[:, :, b1].astype(np.float32)
+    b = arr[:, :, b2].astype(np.float32)
+    nd = (a - b) / (a + b + eps)
+    return np.clip((nd + 1.0) / 2.0, 0.0, 1.0)[:, :, np.newaxis]
+
+
+def compute_ndvi(arr: np.ndarray) -> np.ndarray:
+    return _normalized_diff(arr, _MS_NIR, _MS_RED)
+
+
+def compute_ndre(arr: np.ndarray) -> np.ndarray:
+    return _normalized_diff(arr, _MS_NIR, _MS_RED_EDGE)
 
 
 def read_ms(path: str, cfg: Optional[CFG] = None) -> torch.Tensor:
     arr = read_tiff(path)
-    if cfg is not None and cfg.MS_ADD_NDVI:
-        ndvi = compute_ndvi(arr)
-        arr = normalize_per_band_minmax(arr)
-        arr = np.concatenate([arr, ndvi], axis=2)
-    else:
-        arr = normalize_per_band_minmax(arr)
+    indices = []
+    if cfg is not None:
+        if cfg.MS_ADD_NDVI:
+            indices.append(compute_ndvi(arr))
+        if cfg.MS_ADD_NDRE:
+            indices.append(compute_ndre(arr))
+    arr = normalize_per_band_minmax(arr)
+    if indices:
+        arr = np.concatenate([arr] + indices, axis=2)
     return torch.from_numpy(arr).permute(2, 0, 1)
 
 
@@ -154,7 +164,7 @@ class WheatDataset(Dataset):
         self.pca_n_features = pca_n_features if pca_n_features is not None else hs_ch
         
         self.rgb_ch = 3 if cfg.USE_RGB else 0
-        self.ms_ch = (6 if cfg.MS_ADD_NDVI else 5) if cfg.USE_MS else 0
+        self.ms_ch = (5 + cfg.MS_ADD_NDVI + cfg.MS_ADD_NDRE) if cfg.USE_MS else 0
         
         if pca_model is not None and cfg.USE_HS:
             self.hs_ch_used = cfg.PCA_COMPONENTS
