@@ -145,12 +145,8 @@ def main():
     
     trainer.fit(model, dm)
     print(f"Best val_f1: {checkpoint_cb.best_model_score:.4f}")
-    print(f"Best model: {checkpoint_cb.best_model_path}")
-    print(f"{'='*60}\n")
     
-    print("Generating predictions...")
     test_preds = trainer.predict(model, dm.test_dataloader(), ckpt_path='best')
-    ids = [item for batch in test_preds for item in batch['ids']]
     preds = torch.cat([batch['preds'] for batch in test_preds]).cpu().numpy()
     
     sub = pd.DataFrame({

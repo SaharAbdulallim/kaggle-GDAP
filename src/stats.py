@@ -1,7 +1,6 @@
 import os
 
 import joblib
-import numpy as np
 import torch
 from sklearn.decomposition import PCA
 from tqdm import tqdm

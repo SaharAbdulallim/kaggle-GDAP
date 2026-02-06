@@ -12,10 +12,9 @@ import pytorch_lightning as pl
 import tifffile as tiff
 import torch
 import torch.nn.functional as F
-from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader, Dataset
 
-from src.config import CFG, ID2LBL, LBL2ID
+from src.config import CFG, LBL2ID
 
 
 def seed_everything(seed: int):

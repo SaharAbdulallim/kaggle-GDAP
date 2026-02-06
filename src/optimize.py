@@ -62,7 +62,7 @@ def objective(trial: optuna.Trial) -> float:
 
 
 def run_optimization(n_trials: int = 50):
-    seed_everything(3557)
+    seed_everything(4433)
     os.makedirs("./outputs", exist_ok=True)
     
     study = optuna.create_study(
@@ -93,7 +93,7 @@ if __name__ == "__main__":
         'hyperparameters': study.best_params
     }
     
-    with open("./outputs/best_params.yaml", "w") as f:
+    with open("./outputs/best_params.yaml", "w", encoding="utf-8") as f:
         yaml.dump(best_config, f, default_flow_style=False)
     
-    print(f"Saved to outputs/best_params.yaml")
+    print("Saved to outputs/best_params.yaml")
