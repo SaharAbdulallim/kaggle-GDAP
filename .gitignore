@@ -9,3 +9,4 @@ outputs
 lightning_logs
 __marimo__
 checkpoints
+wandb
