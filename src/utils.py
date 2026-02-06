@@ -184,6 +184,23 @@ class WheatDataset(Dataset):
             modalities["ms"] = stacked[3:8]
             modalities["hs"] = stacked[8:]
         
+        if self.cfg.RGB_MEAN is not None and self.cfg.RGB_STD is not None:
+            mean = torch.tensor(self.cfg.RGB_MEAN).view(3, 1, 1)
+            std = torch.tensor(self.cfg.RGB_STD).view(3, 1, 1)
+            modalities["rgb"] = (modalities["rgb"] - mean) / std
+        
+        if self.cfg.MS_MEAN is not None and self.cfg.MS_STD is not None:
+            mean = torch.tensor(self.cfg.MS_MEAN).view(5, 1, 1)
+            std = torch.tensor(self.cfg.MS_STD).view(5, 1, 1)
+            modalities["ms"] = (modalities["ms"] - mean) / std
+        
+        if self.cfg.HS_MEAN is not None and self.cfg.HS_STD is not None:
+            hs_mean = torch.tensor(self.cfg.HS_MEAN)[:self.hs_ch]
+            hs_std = torch.tensor(self.cfg.HS_STD)[:self.hs_ch]
+            mean = hs_mean.view(self.hs_ch, 1, 1)
+            std = hs_std.view(self.hs_ch, 1, 1)
+            modalities["hs"] = (modalities["hs"] - mean) / std
+        
         if "label" in row:
             return modalities, torch.tensor(LBL2ID[row["label"]], dtype=torch.long)
         return modalities, row["base_id"]

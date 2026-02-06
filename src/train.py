@@ -6,11 +6,11 @@ import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import wandb
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from torchmetrics import Accuracy, F1Score
 
+import wandb
 from src.config import CFG, ID2LBL
 from src.utils import WheatDataModule, seed_everything
 
@@ -36,11 +36,15 @@ class AttentionFusion(nn.Module):
 
 
 class BilinearFusion(nn.Module):
-    def __init__(self, dim1, dim2, out_dim):
+    def __init__(self, dim1, dim2, out_dim, reduce_dim=256):
         super().__init__()
-        self.bilinear = nn.Bilinear(dim1, dim2, out_dim)
+        self.proj1 = nn.Linear(dim1, reduce_dim)
+        self.proj2 = nn.Linear(dim2, reduce_dim)
+        self.bilinear = nn.Bilinear(reduce_dim, reduce_dim, out_dim)
         
     def forward(self, x1, x2):
+        x1 = self.proj1(x1)
+        x2 = self.proj2(x2)
         return self.bilinear(x1, x2)
 
 
@@ -57,13 +61,13 @@ class TransformerFusion(nn.Module):
 
 
 class MultiModalClassifier(pl.LightningModule):
-    def __init__(self, cfg: CFG, hs_channels: int, num_classes: int = 3, fusion_type: str = "concat"):
+    def __init__(self, cfg: CFG, hs_channels: int, num_classes: int = 3):
         super().__init__()
         self.save_hyperparameters()
         self.cfg = cfg
-        self.fusion_type = fusion_type
         
-        self.rgb_enc = timm.create_model(cfg.RGB_BACKBONE, pretrained=True, in_chans=3, num_classes=0)
+        rgb_pretrained = cfg.RGB_PRETRAINED_WEIGHTS if cfg.RGB_PRETRAINED_WEIGHTS != "imagenet" else True
+        self.rgb_enc = timm.create_model(cfg.RGB_BACKBONE, pretrained=rgb_pretrained, in_chans=3, num_classes=0)
         self.ms_enc = timm.create_model(cfg.MS_BACKBONE, pretrained=False, in_chans=5, num_classes=0)
         self.hs_enc = timm.create_model(cfg.HS_BACKBONE, pretrained=False, in_chans=hs_channels, num_classes=0)
         
@@ -71,25 +75,29 @@ class MultiModalClassifier(pl.LightningModule):
         ms_dim = self.ms_enc.num_features
         hs_dim = self.hs_enc.num_features
         
-        if fusion_type == "attention":
+        if cfg.FUSION_TYPE == "attention":
             max_dim = max(rgb_dim, ms_dim, hs_dim)
             self.rgb_proj = nn.Linear(rgb_dim, max_dim) if rgb_dim != max_dim else nn.Identity()
             self.ms_proj = nn.Linear(ms_dim, max_dim) if ms_dim != max_dim else nn.Identity()
             self.hs_proj = nn.Linear(hs_dim, max_dim) if hs_dim != max_dim else nn.Identity()
             self.fusion = AttentionFusion(max_dim)
+            self.dropout = nn.Dropout(cfg.DROPOUT)
             self.classifier = nn.Linear(max_dim, num_classes)
-        elif fusion_type == "bilinear":
+        elif cfg.FUSION_TYPE == "bilinear":
             self.fusion = BilinearFusion(rgb_dim + ms_dim, hs_dim, 512)
+            self.dropout = nn.Dropout(cfg.DROPOUT)
             self.classifier = nn.Linear(512, num_classes)
-        elif fusion_type == "transformer":
+        elif cfg.FUSION_TYPE == "transformer":
             max_dim = max(rgb_dim, ms_dim, hs_dim)
             self.rgb_proj = nn.Linear(rgb_dim, max_dim) if rgb_dim != max_dim else nn.Identity()
             self.ms_proj = nn.Linear(ms_dim, max_dim) if ms_dim != max_dim else nn.Identity()
             self.hs_proj = nn.Linear(hs_dim, max_dim) if hs_dim != max_dim else nn.Identity()
             self.fusion = TransformerFusion(max_dim)
+            self.dropout = nn.Dropout(cfg.DROPOUT)
             self.classifier = nn.Linear(max_dim, num_classes)
         else:  # concat
             total_feat_dim = rgb_dim + ms_dim + hs_dim
+            self.dropout = nn.Dropout(cfg.DROPOUT)
             self.classifier = nn.Linear(total_feat_dim, num_classes)
         
         self.criterion = nn.CrossEntropyLoss(label_smoothing=cfg.LABEL_SMOOTHING)
@@ -103,16 +111,16 @@ class MultiModalClassifier(pl.LightningModule):
         ms_feat = self.ms_enc(modalities["ms"])
         hs_feat = self.hs_enc(modalities["hs"])
         
-        if self.fusion_type == "attention":
+        if self.cfg.FUSION_TYPE == "attention":
             rgb_feat = self.rgb_proj(rgb_feat)
             ms_feat = self.ms_proj(ms_feat)
             hs_feat = self.hs_proj(hs_feat)
             stacked = torch.stack([rgb_feat, ms_feat, hs_feat], dim=1)
             fused = self.fusion(stacked)
-        elif self.fusion_type == "bilinear":
+        elif self.cfg.FUSION_TYPE == "bilinear":
             combined = torch.cat([rgb_feat, ms_feat], dim=1)
             fused = self.fusion(combined, hs_feat)
-        elif self.fusion_type == "transformer":
+        elif self.cfg.FUSION_TYPE == "transformer":
             rgb_feat = self.rgb_proj(rgb_feat)
             ms_feat = self.ms_proj(ms_feat)
             hs_feat = self.hs_proj(hs_feat)
@@ -121,6 +129,7 @@ class MultiModalClassifier(pl.LightningModule):
         else:  # concat
             fused = torch.cat([rgb_feat, ms_feat, hs_feat], dim=1)
         
+        fused = self.dropout(fused)
         return self.classifier(fused)
     
     def training_step(self, batch, batch_idx):
@@ -217,9 +226,8 @@ def main():
     early_stop_cb = EarlyStopping(monitor='val_f1', patience=15, mode='max')
     logger = False
     if cfg.WANDB_ENABLED:
-        print("Initializing Weights & Biases logger...")
-        wandb.init(project=cfg.WANDB_PROJECT_NAME, name=cfg.WANDB_RUN_NAME if cfg.WANDB_RUN_NAME else 'default')
-        logger = WandbLogger(project=cfg.WANDB_PROJECT_NAME, name=cfg.WANDB_RUN_NAME if cfg.WANDB_RUN_NAME else 'default')
+        print("Using Weights & Biases for logging")
+        logger = WandbLogger(project=cfg.WANDB_PROJECT_NAME, name=cfg.WANDB_RUN_NAME)
  
     trainer = pl.Trainer(
         max_epochs=cfg.EPOCHS,

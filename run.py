@@ -1,7 +1,7 @@
 import marimo
 
 __generated_with = "0.19.7"
-app = marimo.App()
+app = marimo.App(width="medium")
 
 
 @app.cell
@@ -10,34 +10,40 @@ def _():
     import pandas as pd
     import pytorch_lightning as pl
     from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+    from pytorch_lightning.loggers import WandbLogger
     import torch
 
     from src.config import CFG, ID2LBL
     from src.train import MultiModalClassifier
 
     from src.utils import WheatDataModule, seed_everything
+
+    from src.stats import calculate_stats
     return (
-        CFG,
         EarlyStopping,
         ModelCheckpoint,
         MultiModalClassifier,
+        WandbLogger,
         WheatDataModule,
-        os,
         pd,
         pl,
-        seed_everything,
+        torch,
     )
 
 
 @app.cell
-def _():
+def _(torch):
     import wandb 
     wandb.login()
+
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+    torch.cuda.ipc_collect()
     return
 
 
-@app.cell
-def _(CFG, os, seed_everything):
+app._unparsable_cell(
+    r"""
     cfg = CFG()
     cfg.ROOT = "./data"
     cfg.TRAIN_DIR = "train"
@@ -46,22 +52,23 @@ def _(CFG, os, seed_everything):
 
 
     cfg.EPOCHS = 50
-    cfg.IMG_SIZE = 224
+    cfg.IMG_SIZE = 64
     cfg.BATCH_SIZE = 64
     cfg.LR = 0.00023125569665524058
     cfg.WD = 0.044560031865346926
-    cfg.LABEL_SMOOTHING=0.13396786789053855
-    cfg.DROPOUT=0.44921894226882936
-    cfg.SCHEDULER_TYPE='onecycle'
-    cfg.AUG_STRENGTH='medium'
+    cfg.LABEL_SMOOTHING = 0.13396786789053855
+    cfg.DROPOUT = 0.44921894226882936
+    cfg.SCHEDULER_TYPE = 'onecycle'
+    cfg.AUG_STRENGTH = 'medium'
+    cfg.FUSION_TYPE = 'concat'
 
-    cfg.RGB_BACKBONE = "efficientnet_b0"
-    cfg.MS_BACKBONE = "efficientnet_b0"
-    cfg.HS_BACKBONE = "resnet18"
+    cfg.RGB_BACKBONE = "resnet18"
+    cfg.MS_BACKBONE = "resnet18"
+    cfg.HS_BACKBONE = "resnet34"
 
 
-    cfg.WANDB_ENABLED= True
-    cfg.WANDB_RUN_NAME = 'hyperparam_tuned'
+    cfg.WANDB_ENABLED = True
+    cfg.WANDB_RUN_NAME = f'modality_{cfg.FUSION_TYPE}_{cfg.RGB_BACKBONE}}'
 
 
 
@@ -71,7 +78,20 @@ def _(CFG, os, seed_everything):
 
     seed_everything(cfg.SEED)
     os.makedirs(cfg.OUT_DIR, exist_ok=True)
-    return (cfg,)
+
+    stats = calculate_stats(cfg, verbose=True)
+    """,
+    name="_"
+)
+
+
+@app.cell
+def _(cfg, stats):
+    cfg.MS_MEAN = stats['ms_mean']
+    cfg.MS_STD = stats['ms_std']
+    cfg.RGB_MEAN = stats['rgb_mean']
+    cfg.RGB_STD = stats['rgb_std']
+    return
 
 
 @app.cell
@@ -99,8 +119,6 @@ def _(WheatDataModule, cfg, pd):
         print(f"  {label:8s}: {count:4d} ({pct:5.1f}%)")
 
 
-
-    print(f"Mode:  'MULTIMODAL'")
     print(f"Channels: {dm.n_ch} | HS: {dm.hs_ch}")
     print(f"Train samples: {len(dm.train_ds)}")
     print(f"Val samples: {len(dm.val_ds)}")
@@ -109,7 +127,15 @@ def _(WheatDataModule, cfg, pd):
 
 
 @app.cell
-def _(EarlyStopping, ModelCheckpoint, MultiModalClassifier, cfg, dm, pl):
+def _(
+    EarlyStopping,
+    ModelCheckpoint,
+    MultiModalClassifier,
+    WandbLogger,
+    cfg,
+    dm,
+    pl,
+):
     model = MultiModalClassifier(cfg, hs_channels=dm.hs_ch, num_classes=3)
 
     checkpoint_cb = ModelCheckpoint(
@@ -126,6 +152,7 @@ def _(EarlyStopping, ModelCheckpoint, MultiModalClassifier, cfg, dm, pl):
         max_epochs=cfg.EPOCHS,
         accelerator='auto',
         devices=1,
+        logger = WandbLogger(project=cfg.WANDB_PROJECT_NAME,name=cfg.WANDB_RUN_NAME) if cfg.WANDB_ENABLED else False , 
         callbacks=[checkpoint_cb, early_stop_cb],
         precision='16-mixed',
         deterministic=True
@@ -159,6 +186,11 @@ def _():
     # sub.to_csv(os.path.join(cfg.OUT_DIR, 'submission.csv'), index=False)
     # print(f"\nSubmission saved: {os.path.join(cfg.OUT_DIR, 'submission.csv')}")
     # print(sub['Category'].value_counts())
+    return
+
+
+@app.cell
+def _():
     return
 
 
