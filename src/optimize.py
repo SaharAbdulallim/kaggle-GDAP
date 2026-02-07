@@ -212,14 +212,23 @@ def train_final(
     w[y_all == 0] = cfg.HEALTH_WEIGHT
     if X_pseudo is not None and len(X_pseudo) > 0:
         w[len(y_train) :] *= cfg.PSEUDO_WEIGHT
-    clf = LGBMClassifier(**cfg.LGB_PARAMS, verbose=-1, random_state=cfg.SEED)
-    clf.fit(Xtr, y_all, sample_weight=w)
-    return clf, sc
+
+    models = []
+    for s in cfg.PSEUDO_SEEDS:
+        clf = LGBMClassifier(**cfg.LGB_PARAMS, verbose=-1, random_state=s)
+        clf.fit(Xtr, y_all, sample_weight=w)
+        models.append(clf)
+    print(f"Trained {len(models)} models (seeds: {cfg.PSEUDO_SEEDS})")
+    return models, sc
 
 
-def predict(clf, sc, X_test: np.ndarray, test_names: list[str], cfg: CFG):
+def predict(models, sc, X_test: np.ndarray, test_names: list[str], cfg: CFG):
     Xte = _to_df(sc.transform(X_test), X_test.shape[1])
-    preds = clf.predict(Xte)
+    probs = np.zeros((len(X_test), cfg.N_CLASSES))
+    for clf in models:
+        probs += clf.predict_proba(Xte)
+    probs /= len(models)
+    preds = probs.argmax(1)
     return pd.DataFrame(
         {
             "Id": [n + ".tif" for n in test_names],
