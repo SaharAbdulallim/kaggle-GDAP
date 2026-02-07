@@ -148,7 +148,7 @@ def run_optimization(
         skf = StratifiedKFold(
             n_splits=cfg.CV_FOLDS, shuffle=True, random_state=cfg.SEED
         )
-        val_scores = []
+        val_scores, train_scores = [], []
         for tr, va in skf.split(X, y):
             if X_pseudo is not None and len(X_pseudo) > 0:
                 X_fold = np.vstack([X[tr], X_pseudo])
@@ -164,8 +164,13 @@ def run_optimization(
                 w[len(y[tr]) :] *= pw
             clf = LGBMClassifier(**p, verbose=-1, random_state=cfg.SEED)
             _fit_with_early_stop(clf, Xtr, y_fold, Xva, y[va], w)
+            train_scores.append(f1_score(y_fold, clf.predict(Xtr), average="macro"))
             val_scores.append(f1_score(y[va], clf.predict(Xva), average="macro"))
-        return np.mean(val_scores)
+        mean_val = np.mean(val_scores)
+        mean_gap = np.mean(train_scores) - mean_val
+        trial.set_user_attr("val_f1", mean_val)
+        trial.set_user_attr("gap", mean_gap)
+        return mean_val
 
     study = optuna.create_study(
         direction="maximize",
@@ -175,7 +180,8 @@ def run_optimization(
     )
     study.optimize(objective, n_trials=cfg.OPTUNA_TRIALS)
 
-    best = study.best_params
+    bt = study.best_trial
+    best = dict(bt.params)
     hw = best.pop("health_weight")
     pw = best.pop("pseudo_weight", cfg.PSEUDO_WEIGHT)
     return {
@@ -183,6 +189,7 @@ def run_optimization(
         "health_weight": hw,
         "pseudo_weight": pw,
         "best_f1": study.best_value,
+        "best_gap": bt.user_attrs.get("gap", 0.0),
     }
 
 

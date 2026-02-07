@@ -66,8 +66,9 @@ def main():
         cfg.PSEUDO_WEIGHT = result["pseudo_weight"]
         print(f"  Best F1: {result['best_f1']:.4f}")
         print(f"  Params: {cfg.LGB_PARAMS}")
-        print(f"  Health weight: {cfg.HEALTH_WEIGHT:.2f}")
-        print(f"  Pseudo weight: {cfg.PSEUDO_WEIGHT:.2f}")
+        print(
+            f"  Health weight: {cfg.HEALTH_WEIGHT:.2f}, Pseudo weight: {cfg.PSEUDO_WEIGHT:.2f}"
+        )
 
         yaml.dump(
             {
