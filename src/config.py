@@ -1,74 +1,79 @@
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 
 
 @dataclass
 class CFG:
-    ROOT: str = "/kaggle/input/beyond-visible-spectrum-ai-for-agriculture-2026/Kaggle_Prepared"
+    ROOT: str = "./data"
     TRAIN_DIR: str = "train"
-    VAL_DIR: str = "val"
+    TEST_DIR: str = "test"
     OUT_DIR: str = "./outputs"
-    
-    USE_RGB: bool = True
-    USE_MS: bool = True
-    USE_HS: bool = True
-    
-    # Architecture
-    RGB_BACKBONE: str = "resnet34"
-    MS_BACKBONE: str = "edgenext_xx_small"
-    HS_BACKBONE: str = "edgenext_xx_small"
-    RGB_PRETRAINED: bool = True
-    RGB_FREEZE_ENCODER: bool = True
-    
-    # Spectral indices (bands: Blue=0, Green=1, Red=2, RedEdge=3, NIR=4)
-    MS_ADD_NDVI: bool = True
-    MS_ADD_NDRE: bool = True
-    
-    # PCA for Hyperspectral
-    PCA_COMPONENTS: int = 20
-    PCA_PATH: str = "./outputs/pca_hs.pkl"
-    
-    # Hyperparameters (tunable via Optuna)
-    IMG_SIZE: int = 64
-    BATCH_SIZE: int = 32
-    EPOCHS: int = 50
-    LR: float = 0.001
-    WD: float = 0.02
-    LABEL_SMOOTHING: float = 0.05
-    FOCAL_GAMMA: float = 2.0
-    DROPOUT: float = 0.4
-    MIXUP_ALPHA: float = 0.2
-    
-    NUM_WORKERS: int = 4
-    SEED: int = 3557
-    
-    # Hyperspectral preprocessing
-    HS_DROP_FIRST: int = 10
-    HS_DROP_LAST: int = 14
-    
-    # Normalization (RGB uses ImageNet for frozen pretrained model)
-    RGB_MEAN: tuple = (0.485, 0.456, 0.406)
-    RGB_STD: tuple = (0.229, 0.224, 0.225)
-    
-    # MS/HS stats computed from training data - update after running stats.py
-    MS_MEAN: tuple = (0.382, 0.404, 0.378, 0.397, 0.393, 0.500, 0.500)
-    MS_STD: tuple = (0.211, 0.208, 0.211, 0.207, 0.208, 0.250, 0.250)
-    
-    # HS PCA stats (20 components) - update after running stats.py with PCA
-    HS_MEAN: tuple = (-0.000003, -0.000006, -0.000005, -0.000001, 0.000004,
-                      -0.000003, 0.000002, 0.000001, 0.000000, -0.000001,
-                      -0.000002, 0.000001, 0.000000, 0.000001, -0.000000,
-                      0.000000, -0.000000, 0.000000, 0.000000, -0.000000)
-    HS_STD: tuple = (2.051, 0.892, 0.218, 0.181, 0.112,
-                     0.081, 0.055, 0.046, 0.035, 0.029,
-                     0.024, 0.021, 0.018, 0.016, 0.014,
-                     0.013, 0.012, 0.011, 0.010, 0.009)
-    
-    # Logging
-    WANDB_ENABLED: bool = True
-    WANDB_PROJECT_NAME: str = "wheat-disease-multimodal"
-    WANDB_RUN_NAME: str = "default"
 
+    CLASSES: tuple = ("Health", "Other", "Rust")
+    N_CLASSES: int = 3
 
-LABELS = ["Health", "Rust", "Other"]
-LBL2ID = {k: i for i, k in enumerate(LABELS)}
-ID2LBL = {i: k for k, i in LBL2ID.items()}
+    N_TOP_FEATURES: int = 120
+    OPTUNA_TRIALS: int = 80
+    CV_FOLDS: int = 5
+    SEED: int = 42
+
+    LGB_PARAMS: dict = field(
+        default_factory=lambda: {
+            "n_estimators": 1680,
+            "max_depth": 7,
+            "learning_rate": 0.01066,
+            "subsample": 0.530,
+            "colsample_bytree": 0.547,
+            "min_child_samples": 20,
+            "reg_alpha": 0.141,
+            "reg_lambda": 1.068,
+            "num_leaves": 22,
+        }
+    )
+
+    HEALTH_WEIGHT: float = 1.44
+    PSEUDO_THRESHOLD: float = 0.75
+    PSEUDO_WEIGHT: float = 0.41
+    PSEUDO_SEEDS: tuple = (42, 123, 456, 789, 1234, 2024, 3141)
+
+    BLANK_SAMPLES: frozenset = frozenset(
+        {
+            "Health_hyper_12",
+            "Health_hyper_153",
+            "Health_hyper_167",
+            "Health_hyper_23",
+            "Health_hyper_26",
+            "Health_hyper_34",
+            "Health_hyper_38",
+            "Health_hyper_5",
+            "Health_hyper_97",
+            "Other_hyper_10",
+            "Other_hyper_100",
+            "Other_hyper_107",
+            "Other_hyper_115",
+            "Other_hyper_121",
+            "Other_hyper_130",
+            "Other_hyper_133",
+            "Other_hyper_136",
+            "Other_hyper_162",
+            "Other_hyper_193",
+            "Other_hyper_48",
+            "Other_hyper_52",
+            "Other_hyper_6",
+            "Other_hyper_71",
+        }
+    )
+
+    @property
+    def class_map(self):
+        return {c: i for i, c in enumerate(self.CLASSES)}
+
+    @property
+    def id_to_label(self):
+        return {i: c for i, c in enumerate(self.CLASSES)}
+
+    def train_path(self, modality):
+        return os.path.join(self.ROOT, self.TRAIN_DIR, modality)
+
+    def test_path(self, modality):
+        return os.path.join(self.ROOT, self.TEST_DIR, modality)

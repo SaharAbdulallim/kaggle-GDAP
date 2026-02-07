@@ -10,3 +10,5 @@ lightning_logs
 __marimo__
 checkpoints
 wandb
+.vscode 
+catboost_info
