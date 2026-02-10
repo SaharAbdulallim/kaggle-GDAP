@@ -46,8 +46,6 @@ class CFG:
             "Health_hyper_34",
             "Health_hyper_38",
             "Health_hyper_5",
-            "Health_hyper_67",
-            "Health_hyper_76",
             "Health_hyper_97",
             "Other_hyper_10",
             "Other_hyper_100",

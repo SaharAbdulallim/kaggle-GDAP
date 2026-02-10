@@ -303,6 +303,46 @@ def extract(sample) -> np.ndarray:
         region = band_means[s:e]
         feats.extend([region.mean(), region.std()])
 
+    # ---- HS zero-pixel fraction (blank/dead tissue indicator) ----
+    zero_mask = np.all(hs < 1, axis=2)
+    feats.append(zero_mask.sum() / (hs.shape[0] * hs.shape[1]))
+
+    # ---- HS GLCM on critical bands (red-edge B43-59, NIR B80-95) ----
+    re_spatial = _normalize_u8(hs[:, :, 43:59].mean(axis=2))
+    nir_spatial = _normalize_u8(hs[:, :, 80:95].mean(axis=2))
+    for img in (re_spatial, nir_spatial):
+        feats.extend(_glcm(img, distances=(1, 2), angles=(0, np.pi / 2)))
+        feats.extend(_lbp(img, 1, 8))
+
+    # ---- HS spatial block heterogeneity on critical bands ----
+    h_hs, w_hs = hs.shape[0], hs.shape[1]
+    for s, e in [(43, 59), (80, 100)]:
+        region_map = hs[:, :, s:e].mean(axis=2)
+        bh, bw = max(1, h_hs // 4), max(1, w_hs // 4)
+        block_means = []
+        for bi in range(4):
+            for bj in range(4):
+                blk = region_map[bi * bh : (bi + 1) * bh, bj * bw : (bj + 1) * bw]
+                block_means.append(blk.mean())
+        bm = np.array(block_means)
+        feats.extend([bm.std(), bm.max() - bm.min(), np.std(bm) / (np.mean(bm) + EPS)])
+
+    # ---- Per-pixel red-edge curvature (2nd derivative) ----
+    d2 = np.diff(pixels[:, 43:65], n=2, axis=1)
+    d2_max = d2.max(axis=1)
+    d2_min = d2.min(axis=1)
+    d2_range = d2_max - d2_min
+    for arr in (d2_max, d2_min, d2_range):
+        feats.extend([arr.mean(), arr.std(), np.median(arr)])
+
+    # ---- HS critical band individual means (43-59, every 2nd) ----
+    for b in range(43, 60, 2):
+        feats.append(band_means[b])
+
+    # ---- NIR spatial std (diagnostic showed H_as_O has low NIR_std) ----
+    nir_region = hs[:, :, 80:100].mean(axis=2)
+    feats.extend([nir_region.std(), nir_region.mean() / (nir_region.std() + EPS)])
+
     # ======================== Cross-modal ========================
     if ms is not None:
         nir_ms_m = ms[:, :, 4].mean()
