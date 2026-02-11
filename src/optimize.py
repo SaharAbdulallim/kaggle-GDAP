@@ -38,16 +38,7 @@ def get_feature_importance(X: np.ndarray, y: np.ndarray, cfg: CFG) -> np.ndarray
 
 
 def _fit_with_early_stop(clf, Xtr, ytr, Xva, yva, w):
-    clf.fit(
-        Xtr,
-        ytr,
-        sample_weight=w,
-        eval_set=[(Xva, yva)],
-        callbacks=[
-            early_stopping(EARLY_STOP_ROUNDS, verbose=False),
-            log_evaluation(-1),
-        ],
-    )
+    clf.fit(Xtr, ytr, sample_weight=w)
     return clf
 
 
@@ -115,14 +106,14 @@ def evaluate(
             w[len(y[tr]) :] *= pseudo_weight
         clf = LGBMClassifier(**params, verbose=-1, random_state=seed)
         _fit_with_early_stop(clf, Xtr, y_fold, Xva, y[va], w)
-        best_iters.append(clf.best_iteration_)
+        best_iters.append(params.get("n_estimators"))
         tr_f1 = f1_score(y_fold, clf.predict(Xtr), average="macro")
         preds[va] = clf.predict(Xva)
         va_f1 = f1_score(y[va], preds[va], average="macro")
         train_scores.append(tr_f1)
         val_scores.append(va_f1)
         print(
-            f"  Fold {fold_i}: train_f1={tr_f1:.4f}  val_f1={va_f1:.4f}  gap={tr_f1 - va_f1:.4f}  trees={clf.best_iteration_}"
+            f"  Fold {fold_i}: train_f1={tr_f1:.4f}  val_f1={va_f1:.4f}  gap={tr_f1 - va_f1:.4f}  trees={params.get('n_estimators')}"
         )
     return {
         "val_f1": np.mean(val_scores),
@@ -156,6 +147,10 @@ def run_optimization(
             "reg_alpha": trial.suggest_float("reg_alpha", 0.05, 20.0, log=True),
             "reg_lambda": trial.suggest_float("reg_lambda", 0.05, 20.0, log=True),
             "num_leaves": trial.suggest_int("num_leaves", 8, 50),
+            "boosting_type": "dart",
+            "drop_rate": trial.suggest_float("drop_rate", 0.05, 0.2),
+            "skip_drop": trial.suggest_float("skip_drop", 0.3, 0.7),
+            "max_drop": trial.suggest_int("max_drop", 20, 100),
         }
         hw = trial.suggest_float("health_weight", 1.0, 3.0)
         pw = (

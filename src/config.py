@@ -15,25 +15,29 @@ class CFG:
     N_TOP_FEATURES: int = 120
     OPTUNA_TRIALS: int = 40
     CV_FOLDS: int = 5
-    SEED: int = 42
+    SEED: int = 62
 
     LGB_PARAMS: dict = field(
         default_factory=lambda: {
-            "n_estimators": 1200,
-            "max_depth": 8,
-            "learning_rate": 0.03263883714638476,
-            "subsample": 0.7932548613260098,
-            "colsample_bytree": 0.3659810449273963,
-            "min_child_samples": 33,
-            "reg_alpha": 0.9601779583499724,
-            "reg_lambda": 9.273302219944947,
-            "num_leaves": 13,
+            "n_estimators": 2425,
+            "max_depth": 4,
+            "learning_rate": 0.017202488117011486,
+            "subsample": 0.5353952394175464,
+            "colsample_bytree": 0.4424202471887338,
+            "min_child_samples": 11,
+            "reg_alpha": 1.927937584863159,
+            "reg_lambda": 1.0161807863995584,
+            "num_leaves": 10,
+            "boosting_type": "dart",
+            "drop_rate": 0.09179696963549172,
+            "skip_drop": 0.6633063543866614,
+            "max_drop": 39,
         }
     )
 
-    HEALTH_WEIGHT: float = 2.03
+    HEALTH_WEIGHT: float = 1.2897897441824462
     PSEUDO_THRESHOLD: float = 0.75
-    PSEUDO_WEIGHT: float = 0.74
+    PSEUDO_WEIGHT: float = 0.5405074842498068
     PSEUDO_SEEDS: tuple = (42, 123, 456)
 
     BLANK_SAMPLES: frozenset = frozenset(
