@@ -6,7 +6,9 @@ from sklearn.metrics import f1_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
+from src.augment import create_augmented_batch
 from src.config import CFG
+from src.features import extract_batch
 
 EARLY_STOP_ROUNDS = 50
 
@@ -78,17 +80,32 @@ def evaluate(
     X_pseudo: np.ndarray | None = None,
     y_pseudo: np.ndarray | None = None,
     pseudo_weight: float = 0.5,
+    samples: list | None = None,
+    use_augmentation: bool = True,
+    aug_factor: int = 2,
 ) -> dict:
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     preds = np.zeros(len(y), dtype=int)
     train_scores, val_scores, best_iters = [], [], []
     n = X.shape[1]
     for fold_i, (tr, va) in enumerate(skf.split(X, y)):
-        if X_pseudo is not None and len(X_pseudo) > 0:
-            X_fold = np.vstack([X[tr], X_pseudo])
-            y_fold = np.concatenate([y[tr], y_pseudo])
+        if use_augmentation and samples is not None:
+            train_samples = [samples[i] for i in tr]
+            aug_samples, aug_labels = create_augmented_batch(
+                train_samples, y[tr], aug_factor=aug_factor
+            )
+            X_aug = extract_batch(aug_samples)
+            if X_pseudo is not None and len(X_pseudo) > 0:
+                X_fold = np.vstack([X_aug, X_pseudo])
+                y_fold = np.concatenate([aug_labels, y_pseudo])
+            else:
+                X_fold, y_fold = X_aug, aug_labels
         else:
-            X_fold, y_fold = X[tr], y[tr]
+            if X_pseudo is not None and len(X_pseudo) > 0:
+                X_fold = np.vstack([X[tr], X_pseudo])
+                y_fold = np.concatenate([y[tr], y_pseudo])
+            else:
+                X_fold, y_fold = X[tr], y[tr]
         sc = StandardScaler()
         Xtr = _to_df(sc.fit_transform(X_fold), n)
         Xva = _to_df(sc.transform(X[va]), n)
@@ -123,6 +140,8 @@ def run_optimization(
     cfg: CFG,
     X_pseudo: np.ndarray | None = None,
     y_pseudo: np.ndarray | None = None,
+    samples: list | None = None,
+    use_augmentation: bool = True,
 ) -> dict:
     def objective(trial):
         p = {
@@ -150,11 +169,23 @@ def run_optimization(
         )
         val_scores, train_scores = [], []
         for tr, va in skf.split(X, y):
-            if X_pseudo is not None and len(X_pseudo) > 0:
-                X_fold = np.vstack([X[tr], X_pseudo])
-                y_fold = np.concatenate([y[tr], y_pseudo])
+            if use_augmentation and samples is not None:
+                train_samples = [samples[i] for i in tr]
+                aug_samples, aug_labels = create_augmented_batch(
+                    train_samples, y[tr], aug_factor=1
+                )
+                X_aug = extract_batch(aug_samples)
+                if X_pseudo is not None and len(X_pseudo) > 0:
+                    X_fold = np.vstack([X_aug, X_pseudo])
+                    y_fold = np.concatenate([aug_labels, y_pseudo])
+                else:
+                    X_fold, y_fold = X_aug, aug_labels
             else:
-                X_fold, y_fold = X[tr], y[tr]
+                if X_pseudo is not None and len(X_pseudo) > 0:
+                    X_fold = np.vstack([X[tr], X_pseudo])
+                    y_fold = np.concatenate([y[tr], y_pseudo])
+                else:
+                    X_fold, y_fold = X[tr], y[tr]
             sc = StandardScaler()
             Xtr = _to_df(sc.fit_transform(X_fold), n)
             Xva = _to_df(sc.transform(X[va]), n)
@@ -199,12 +230,26 @@ def train_final(
     cfg: CFG,
     X_pseudo: np.ndarray | None = None,
     y_pseudo: np.ndarray | None = None,
+    samples: list | None = None,
+    use_augmentation: bool = True,
+    aug_factor: int = 3,
 ):
-    if X_pseudo is not None and len(X_pseudo) > 0:
-        X_all = np.vstack([X_train, X_pseudo])
-        y_all = np.concatenate([y_train, y_pseudo])
+    if use_augmentation and samples is not None:
+        aug_samples, aug_labels = create_augmented_batch(
+            samples, y_train, aug_factor=aug_factor
+        )
+        X_aug = extract_batch(aug_samples)
+        if X_pseudo is not None and len(X_pseudo) > 0:
+            X_all = np.vstack([X_aug, X_pseudo])
+            y_all = np.concatenate([aug_labels, y_pseudo])
+        else:
+            X_all, y_all = X_aug, aug_labels
     else:
-        X_all, y_all = X_train, y_train
+        if X_pseudo is not None and len(X_pseudo) > 0:
+            X_all = np.vstack([X_train, X_pseudo])
+            y_all = np.concatenate([y_train, y_pseudo])
+        else:
+            X_all, y_all = X_train, y_train
 
     sc = StandardScaler()
     Xtr = _to_df(sc.fit_transform(X_all), X_train.shape[1])

@@ -13,28 +13,28 @@ class CFG:
     N_CLASSES: int = 3
 
     N_TOP_FEATURES: int = 120
-    OPTUNA_TRIALS: int = 80
+    OPTUNA_TRIALS: int = 40
     CV_FOLDS: int = 5
     SEED: int = 42
 
     LGB_PARAMS: dict = field(
         default_factory=lambda: {
-            "n_estimators": 1884,
-            "max_depth": 3,
-            "learning_rate": 0.007643295574118502,
-            "subsample": 0.7110816720927418,
-            "colsample_bytree": 0.3566403547984045,
-            "min_child_samples": 26,
-            "reg_alpha": 0.9397882625946417,
-            "reg_lambda": 0.7402899334232234,
-            "num_leaves": 46,
+            "n_estimators": 1200,
+            "max_depth": 8,
+            "learning_rate": 0.03263883714638476,
+            "subsample": 0.7932548613260098,
+            "colsample_bytree": 0.3659810449273963,
+            "min_child_samples": 33,
+            "reg_alpha": 0.9601779583499724,
+            "reg_lambda": 9.273302219944947,
+            "num_leaves": 13,
         }
     )
 
-    HEALTH_WEIGHT: float = 1.5521
+    HEALTH_WEIGHT: float = 2.03
     PSEUDO_THRESHOLD: float = 0.75
-    PSEUDO_WEIGHT: float = 0.7422
-    PSEUDO_SEEDS: tuple = (42, 123, 456, 789, 1234, 2024, 3141)
+    PSEUDO_WEIGHT: float = 0.74
+    PSEUDO_SEEDS: tuple = (42, 123, 456)
 
     BLANK_SAMPLES: frozenset = frozenset(
         {

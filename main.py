@@ -60,7 +60,9 @@ def main():
 
     if not args.skip_optuna:
         print(f"\nOptuna HPO ({cfg.OPTUNA_TRIALS} trials, {cfg.CV_FOLDS}-fold)...")
-        result = run_optimization(X, labels, cfg, X_pseudo, y_pseudo)
+        result = run_optimization(
+            X, labels, cfg, X_pseudo, y_pseudo, samples, use_augmentation=True
+        )
         cfg.LGB_PARAMS = result["params"]
         cfg.HEALTH_WEIGHT = result["health_weight"]
         cfg.PSEUDO_WEIGHT = result["pseudo_weight"]
@@ -92,6 +94,9 @@ def main():
         X_pseudo,
         y_pseudo,
         cfg.PSEUDO_WEIGHT,
+        samples,
+        use_augmentation=True,
+        aug_factor=2,
     )
     print(
         f"  Train F1: {ev['train_f1']:.4f}  Val F1: {ev['val_f1']:.4f}  Gap: {ev['train_f1'] - ev['val_f1']:.4f}"
@@ -99,7 +104,9 @@ def main():
     print(classification_report(labels, ev["preds"], target_names=list(cfg.CLASSES)))
 
     print("Training final model...")
-    clf, sc = train_final(X, labels, cfg, X_pseudo, y_pseudo)
+    clf, sc = train_final(
+        X, labels, cfg, X_pseudo, y_pseudo, samples, use_augmentation=True, aug_factor=3
+    )
 
     print("Generating submission...")
     test_names = [s["name"] for s in test_samples]

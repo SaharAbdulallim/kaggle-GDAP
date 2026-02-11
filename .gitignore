@@ -12,3 +12,4 @@ checkpoints
 wandb
 .vscode 
 catboost_info
+.DS_Store
