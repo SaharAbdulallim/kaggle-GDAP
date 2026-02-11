@@ -1,3 +1,4 @@
+import argparse
 import os
 
 import numpy as np
@@ -15,10 +16,17 @@ from src.optimize import (
     train_final,
 )
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--run-optuna", action="store_true", help="Run Optuna optimization")
+parser.add_argument("--trials", type=int, default=40, help="Number of Optuna trials")
+parser.add_argument("--folds", type=int, default=5, help="Number of CV folds")
+parser.add_argument("--features", type=int, default=120, help="Number of top features")
+args = parser.parse_args()
+
 cfg = CFG()
-cfg.OPTUNA_TRIALS = 40
-cfg.CV_FOLDS = 5
-cfg.N_TOP_FEATURES = 120
+cfg.OPTUNA_TRIALS = args.trials
+cfg.CV_FOLDS = args.folds
+cfg.N_TOP_FEATURES = args.features
 
 print("Loading data...")
 samples, labels = load_train(cfg)
@@ -47,9 +55,7 @@ dist = np.bincount(y_pseudo, minlength=3)
 print(f"Pseudo-labels: {mask.sum()}/{len(X_test)} (threshold={cfg.PSEUDO_THRESHOLD})")
 print(f"Distribution: H={dist[0]}, O={dist[1]}, R={dist[2]}")
 
-RUN_OPTUNA = False
-
-if RUN_OPTUNA:
+if args.run_optuna:
     print("\nOptuna HPO...")
     result = run_optimization(
         X,
