@@ -65,6 +65,7 @@ if args.run_optuna:
         y_pseudo=y_pseudo,
         samples=samples,
         use_augmentation=True,
+        top_idx=top_idx[: cfg.N_TOP_FEATURES],
     )
     cfg.LGB_PARAMS = result["params"]
     cfg.HEALTH_WEIGHT = result["health_weight"]
@@ -93,6 +94,7 @@ ev = evaluate(
     samples=samples,
     use_augmentation=True,
     aug_factor=2,
+    top_idx=top_idx[: cfg.N_TOP_FEATURES],
 )
 print(
     f"\nTrain F1: {ev['train_f1']:.4f}  |  Val F1: {ev['val_f1']:.4f}  |  Gap: {ev['train_f1'] - ev['val_f1']:.4f}"
@@ -109,6 +111,7 @@ models, sc = train_final(
     samples=samples,
     use_augmentation=True,
     aug_factor=3,
+    top_idx=top_idx[: cfg.N_TOP_FEATURES],
 )
 
 print("\nGenerating submission...")

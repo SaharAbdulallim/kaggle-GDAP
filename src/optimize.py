@@ -1,7 +1,7 @@
 import numpy as np
 import optuna
 import pandas as pd
-from lightgbm import LGBMClassifier, early_stopping, log_evaluation
+from lightgbm import LGBMClassifier
 from sklearn.metrics import f1_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
@@ -9,8 +9,6 @@ from sklearn.preprocessing import StandardScaler
 from src.augment import create_augmented_batch
 from src.config import CFG
 from src.features import extract_batch
-
-EARLY_STOP_ROUNDS = 50
 
 
 def _to_df(arr, n_cols):
@@ -37,7 +35,7 @@ def get_feature_importance(X: np.ndarray, y: np.ndarray, cfg: CFG) -> np.ndarray
     return np.argsort(-clf.feature_importances_)
 
 
-def _fit_with_early_stop(clf, Xtr, ytr, Xva, yva, w):
+def _fit(clf, Xtr, ytr, w):
     clf.fit(Xtr, ytr, sample_weight=w)
     return clf
 
@@ -74,6 +72,7 @@ def evaluate(
     samples: list | None = None,
     use_augmentation: bool = True,
     aug_factor: int = 2,
+    top_idx: np.ndarray | None = None,
 ) -> dict:
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     preds = np.zeros(len(y), dtype=int)
@@ -86,6 +85,8 @@ def evaluate(
                 train_samples, y[tr], aug_factor=aug_factor
             )
             X_aug = extract_batch(aug_samples)
+            if top_idx is not None:
+                X_aug = X_aug[:, top_idx]
             if X_pseudo is not None and len(X_pseudo) > 0:
                 X_fold = np.vstack([X_aug, X_pseudo])
                 y_fold = np.concatenate([aug_labels, y_pseudo])
@@ -105,7 +106,7 @@ def evaluate(
         if X_pseudo is not None and len(X_pseudo) > 0:
             w[len(y[tr]) :] *= pseudo_weight
         clf = LGBMClassifier(**params, verbose=-1, random_state=seed)
-        _fit_with_early_stop(clf, Xtr, y_fold, Xva, y[va], w)
+        _fit(clf, Xtr, y_fold, w)
         best_iters.append(params.get("n_estimators"))
         tr_f1 = f1_score(y_fold, clf.predict(Xtr), average="macro")
         preds[va] = clf.predict(Xva)
@@ -133,6 +134,7 @@ def run_optimization(
     y_pseudo: np.ndarray | None = None,
     samples: list | None = None,
     use_augmentation: bool = True,
+    top_idx: np.ndarray | None = None,
 ) -> dict:
     def objective(trial):
         p = {
@@ -170,6 +172,8 @@ def run_optimization(
                     train_samples, y[tr], aug_factor=1
                 )
                 X_aug = extract_batch(aug_samples)
+                if top_idx is not None:
+                    X_aug = X_aug[:, top_idx]
                 if X_pseudo is not None and len(X_pseudo) > 0:
                     X_fold = np.vstack([X_aug, X_pseudo])
                     y_fold = np.concatenate([aug_labels, y_pseudo])
@@ -189,7 +193,7 @@ def run_optimization(
             if X_pseudo is not None and len(X_pseudo) > 0:
                 w[len(y[tr]) :] *= pw
             clf = LGBMClassifier(**p, verbose=-1, random_state=cfg.SEED)
-            _fit_with_early_stop(clf, Xtr, y_fold, Xva, y[va], w)
+            _fit(clf, Xtr, y_fold, w)
             train_scores.append(f1_score(y_fold, clf.predict(Xtr), average="macro"))
             val_scores.append(f1_score(y[va], clf.predict(Xva), average="macro"))
         mean_val = np.mean(val_scores)
@@ -228,12 +232,15 @@ def train_final(
     samples: list | None = None,
     use_augmentation: bool = True,
     aug_factor: int = 3,
+    top_idx: np.ndarray | None = None,
 ):
     if use_augmentation and samples is not None:
         aug_samples, aug_labels = create_augmented_batch(
             samples, y_train, aug_factor=aug_factor
         )
         X_aug = extract_batch(aug_samples)
+        if top_idx is not None:
+            X_aug = X_aug[:, top_idx]
         if X_pseudo is not None and len(X_pseudo) > 0:
             X_all = np.vstack([X_aug, X_pseudo])
             y_all = np.concatenate([aug_labels, y_pseudo])
