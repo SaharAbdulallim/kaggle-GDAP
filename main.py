@@ -104,13 +104,13 @@ def main():
     print(classification_report(labels, ev["preds"], target_names=list(cfg.CLASSES)))
 
     print("Training final model...")
-    clf, sc = train_final(
+    models, sc = train_final(
         X, labels, cfg, X_pseudo, y_pseudo, samples, use_augmentation=True, aug_factor=3
     )
 
     print("Generating submission...")
     test_names = [s["name"] for s in test_samples]
-    sub = predict(clf, sc, X_test, test_names, cfg)
+    sub = predict(models, sc, X_test, test_names, cfg)
     sub_path = os.path.join(cfg.OUT_DIR, "submission.csv")
     sub.to_csv(sub_path, index=False)
     print(f"  Saved to {sub_path} ({len(sub)} predictions)")
