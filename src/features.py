@@ -92,33 +92,36 @@ def _gabor(
 
 # ------------------------------------------------------------------ Stats helpers
 def _band_stats(band):
+    std_val = band.std()
     return [
         band.mean(),
-        band.std(),
+        std_val,
         *[np.percentile(band, p) for p in (5, 10, 25, 50, 75, 90, 95)],
-        skew(band.ravel()),
-        kurtosis(band.ravel()),
+        skew(band.ravel()) if std_val > 1e-8 else 0.0,
+        kurtosis(band.ravel()) if std_val > 1e-8 else 0.0,
     ]
 
 
 def _index_stats(idx):
+    std_val = idx.std()
     return [
         idx.mean(),
-        idx.std(),
+        std_val,
         *[np.percentile(idx, p) for p in (5, 10, 25, 50, 75, 90, 95)],
-        skew(idx.ravel()),
-        kurtosis(idx.ravel()),
+        skew(idx.ravel()) if std_val > 1e-8 else 0.0,
+        kurtosis(idx.ravel()) if std_val > 1e-8 else 0.0,
         idx.max() - idx.min(),
     ]
 
 
 def _array_stats(arr):
+    std_val = arr.std()
     return [
         arr.mean(),
-        arr.std(),
+        std_val,
         *[np.percentile(arr, p) for p in (10, 25, 50, 75, 90)],
-        skew(arr),
-        kurtosis(arr),
+        skew(arr) if std_val > 1e-8 else 0.0,
+        kurtosis(arr) if std_val > 1e-8 else 0.0,
         arr.max() - arr.min(),
     ]
 
