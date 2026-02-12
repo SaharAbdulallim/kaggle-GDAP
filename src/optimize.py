@@ -2,6 +2,7 @@ import numpy as np
 import optuna
 import pandas as pd
 from lightgbm import LGBMClassifier
+from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import f1_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
@@ -160,12 +161,16 @@ def run_optimization(
             if X_pseudo is not None
             else 0.5
         )
-        n = X.shape[1]
+        var_threshold = trial.suggest_float("var_threshold", 1e-10, 1e-4, log=True)
+
+        selector = VarianceThreshold(threshold=var_threshold)
+        X_filtered = selector.fit_transform(X)
+        n = X_filtered.shape[1]
         skf = StratifiedKFold(
             n_splits=cfg.CV_FOLDS, shuffle=True, random_state=cfg.SEED
         )
         val_scores, train_scores = [], []
-        for tr, va in skf.split(X, y):
+        for tr, va in skf.split(X_filtered, y):
             if use_augmentation and samples is not None:
                 train_samples = [samples[i] for i in tr]
                 aug_samples, aug_labels = create_augmented_batch(
@@ -174,20 +179,23 @@ def run_optimization(
                 X_aug = extract_batch(aug_samples)
                 if top_idx is not None:
                     X_aug = X_aug[:, top_idx]
+                X_aug_filtered = selector.transform(X_aug)
                 if X_pseudo is not None and len(X_pseudo) > 0:
-                    X_fold = np.vstack([X_aug, X_pseudo])
+                    X_pseudo_filtered = selector.transform(X_pseudo)
+                    X_fold = np.vstack([X_aug_filtered, X_pseudo_filtered])
                     y_fold = np.concatenate([aug_labels, y_pseudo])
                 else:
-                    X_fold, y_fold = X_aug, aug_labels
+                    X_fold, y_fold = X_aug_filtered, aug_labels
             else:
                 if X_pseudo is not None and len(X_pseudo) > 0:
-                    X_fold = np.vstack([X[tr], X_pseudo])
+                    X_pseudo_filtered = selector.transform(X_pseudo)
+                    X_fold = np.vstack([X_filtered[tr], X_pseudo_filtered])
                     y_fold = np.concatenate([y[tr], y_pseudo])
                 else:
-                    X_fold, y_fold = X[tr], y[tr]
+                    X_fold, y_fold = X_filtered[tr], y[tr]
             sc = StandardScaler()
             Xtr = _to_df(sc.fit_transform(X_fold), n)
-            Xva = _to_df(sc.transform(X[va]), n)
+            Xva = _to_df(sc.transform(X_filtered[va]), n)
             w = np.ones(len(y_fold))
             w[y_fold == 0] *= hw
             if X_pseudo is not None and len(X_pseudo) > 0:
@@ -214,10 +222,12 @@ def run_optimization(
     best = dict(bt.params)
     hw = best.pop("health_weight")
     pw = best.pop("pseudo_weight", cfg.PSEUDO_WEIGHT)
+    var_thresh = best.pop("var_threshold")
     return {
         "params": best,
         "health_weight": hw,
         "pseudo_weight": pw,
+        "var_threshold": var_thresh,
         "best_f1": study.best_value,
         "best_gap": bt.user_attrs.get("gap", 0.0),
     }

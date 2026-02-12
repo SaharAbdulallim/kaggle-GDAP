@@ -70,10 +70,11 @@ if args.run_optuna:
     cfg.LGB_PARAMS = result["params"]
     cfg.HEALTH_WEIGHT = result["health_weight"]
     cfg.PSEUDO_WEIGHT = result.get("pseudo_weight", cfg.PSEUDO_WEIGHT)
+    cfg.VAR_THRESHOLD = result["var_threshold"]
     print(f"Best F1: {result['best_f1']:.4f}")
     print(f"Params: {cfg.LGB_PARAMS}")
     print(
-        f"Health weight: {cfg.HEALTH_WEIGHT:.2f}, Pseudo weight: {cfg.PSEUDO_WEIGHT:.2f}"
+        f"Health weight: {cfg.HEALTH_WEIGHT:.2f}, Pseudo weight: {cfg.PSEUDO_WEIGHT:.2f}, Var threshold: {cfg.VAR_THRESHOLD:.2e}"
     )
 else:
     print("\nSkipping Optuna, using default params from config")
