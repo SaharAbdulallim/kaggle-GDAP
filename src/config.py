@@ -36,8 +36,8 @@ class CFG:
         }
     )
 
-    PSEUDO_THRESHOLD: float = 0.75
-    PSEUDO_WEIGHT: float = 0.5405074842498068
+    PSEUDO_THRESHOLD: float = 0.84
+    PSEUDO_WEIGHT: float = 0.7
     VAR_THRESHOLD: float = 1e-8
     PSEUDO_SEEDS: tuple = (42, 123, 456)
 
