@@ -9,7 +9,6 @@ from src.data import load_test, load_train
 from src.features import extract_batch
 from src.optimize import (
     evaluate,
-    generate_pseudo_labels,
     get_feature_importance,
     predict,
     run_optimization,
@@ -47,13 +46,7 @@ X = X_all[:, top_idx[: cfg.N_TOP_FEATURES]]
 X_test = X_test_all[:, top_idx[: cfg.N_TOP_FEATURES]]
 print(f"Selected top {cfg.N_TOP_FEATURES} -> train: {X.shape}, test: {X_test.shape}")
 
-print("\nPseudo-labeling...")
-preds, conf, mask = generate_pseudo_labels(X, labels, X_test, cfg)
-X_pseudo = X_test[mask]
-y_pseudo = preds[mask]
-dist = np.bincount(y_pseudo, minlength=3)
-print(f"Pseudo-labels: {mask.sum()}/{len(X_test)} (threshold={cfg.PSEUDO_THRESHOLD})")
-print(f"Distribution: H={dist[0]}, O={dist[1]}, R={dist[2]}")
+# Pseudo-labeling disabled - ablation showed no benefit, increases overfitting
 
 if args.run_optuna:
     print("\nOptuna HPO...")
@@ -61,17 +54,12 @@ if args.run_optuna:
         X,
         labels,
         cfg,
-        X_pseudo=X_pseudo,
-        y_pseudo=y_pseudo,
     )
     cfg.LGB_PARAMS = result["params"]
-    cfg.PSEUDO_THRESHOLD = result.get("pseudo_threshold", cfg.PSEUDO_THRESHOLD)
     cfg.VAR_THRESHOLD = result["var_threshold"]
     print(f"Best F1: {result['best_f1']:.4f}  |  Gap: {result['best_gap']:.4f}")
     print(f"Params: {cfg.LGB_PARAMS}")
-    print(
-        f"Pseudo threshold: {cfg.PSEUDO_THRESHOLD:.2f}, Var threshold: {cfg.VAR_THRESHOLD:.2e}"
-    )
+    print(f"Var threshold: {cfg.VAR_THRESHOLD:.2e}")
 else:
     print("\nSkipping Optuna, using default params from config")
     print(f"Params: {cfg.LGB_PARAMS}")
@@ -83,8 +71,6 @@ ev = evaluate(
     cfg.LGB_PARAMS,
     n_folds=cfg.CV_FOLDS,
     seed=cfg.SEED,
-    X_pseudo=X_pseudo,
-    y_pseudo=y_pseudo,
 )
 print(
     f"\nTrain F1: {ev['train_f1']:.4f}  |  Val F1: {ev['val_f1']:.4f}  |  Gap: {ev['train_f1'] - ev['val_f1']:.4f}"
@@ -96,8 +82,6 @@ models, sc = train_final(
     X,
     labels,
     cfg,
-    X_pseudo=X_pseudo,
-    y_pseudo=y_pseudo,
 )
 
 print("\nGenerating submission...")

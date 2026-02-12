@@ -51,42 +51,19 @@ def _fit(clf, Xtr, ytr, Xval=None, yval=None, early_stop=50):
     return clf
 
 
-def generate_pseudo_labels(X_train, y_train, X_test, cfg: CFG):
-    sc = StandardScaler()
-    n = X_train.shape[1]
-    Xtr = _to_df(sc.fit_transform(X_train), n)
-    Xte = _to_df(sc.transform(X_test), n)
-    probs = np.zeros((len(X_test), cfg.N_CLASSES))
-    for seed in cfg.PSEUDO_SEEDS:
-        clf = LGBMClassifier(**cfg.LGB_PARAMS, verbose=-1, random_state=seed)
-        clf.fit(Xtr, y_train)
-        probs += clf.predict_proba(Xte)
-    probs /= len(cfg.PSEUDO_SEEDS)
-    preds = probs.argmax(1)
-    conf = probs.max(1)
-    mask = conf >= cfg.PSEUDO_THRESHOLD
-    return preds, conf, mask
-
-
 def evaluate(
     X: np.ndarray,
     y: np.ndarray,
     params: dict,
     n_folds: int = 5,
     seed: int = 42,
-    X_pseudo: np.ndarray | None = None,
-    y_pseudo: np.ndarray | None = None,
 ) -> dict:
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     preds = np.zeros(len(y), dtype=int)
     train_scores, val_scores, best_iters = [], [], []
     n = X.shape[1]
     for fold_i, (tr, va) in enumerate(skf.split(X, y)):
-        if X_pseudo is not None and len(X_pseudo) > 0:
-            X_fold = np.vstack([X[tr], X_pseudo])
-            y_fold = np.concatenate([y[tr], y_pseudo])
-        else:
-            X_fold, y_fold = X[tr], y[tr]
+        X_fold, y_fold = X[tr], y[tr]
         sc = StandardScaler()
         Xtr = _to_df(sc.fit_transform(X_fold), n)
         Xva = _to_df(sc.transform(X[va]), n)
@@ -122,8 +99,6 @@ def run_optimization(
     X: np.ndarray,
     y: np.ndarray,
     cfg: CFG,
-    X_pseudo: np.ndarray | None = None,
-    y_pseudo: np.ndarray | None = None,
 ) -> dict:
     def objective(trial):
         p = {
@@ -144,7 +119,6 @@ def run_optimization(
         health_weight = trial.suggest_float("health_weight", 1.0, 3.0)
         p["class_weight"] = {0: health_weight, 1: 1.0, 2: 1.0}
 
-        pseudo_threshold = trial.suggest_float("pseudo_threshold", 0.75, 0.95)
         var_threshold = trial.suggest_float("var_threshold", 1e-10, 1e-4, log=True)
 
         selector = VarianceThreshold(threshold=var_threshold)
@@ -155,12 +129,7 @@ def run_optimization(
         )
         val_scores, train_scores = [], []
         for tr, va in skf.split(X_filtered, y):
-            if X_pseudo is not None and len(X_pseudo) > 0:
-                X_pseudo_filtered = selector.transform(X_pseudo)
-                X_fold = np.vstack([X_filtered[tr], X_pseudo_filtered])
-                y_fold = np.concatenate([y[tr], y_pseudo])
-            else:
-                X_fold, y_fold = X_filtered[tr], y[tr]
+            X_fold, y_fold = X_filtered[tr], y[tr]
             sc = StandardScaler()
             Xtr = _to_df(sc.fit_transform(X_fold), n)
             Xva = _to_df(sc.transform(X_filtered[va]), n)
@@ -207,24 +176,16 @@ def train_final(
     X_train: np.ndarray,
     y_train: np.ndarray,
     cfg: CFG,
-    X_pseudo: np.ndarray | None = None,
-    y_pseudo: np.ndarray | None = None,
 ):
-    if X_pseudo is not None and len(X_pseudo) > 0:
-        X_all = np.vstack([X_train, X_pseudo])
-        y_all = np.concatenate([y_train, y_pseudo])
-    else:
-        X_all, y_all = X_train, y_train
-
     sc = StandardScaler()
-    Xtr = _to_df(sc.fit_transform(X_all), X_train.shape[1])
+    Xtr = _to_df(sc.fit_transform(X_train), X_train.shape[1])
 
     models = []
-    for s in cfg.PSEUDO_SEEDS:
+    for s in cfg.ENSEMBLE_SEEDS:
         clf = LGBMClassifier(**cfg.LGB_PARAMS, verbose=-1, random_state=s)
-        clf.fit(Xtr, y_all)
+        clf.fit(Xtr, y_train)
         models.append(clf)
-    print(f"Trained {len(models)} models (seeds: {cfg.PSEUDO_SEEDS})")
+    print(f"Trained {len(models)} models (seeds: {cfg.ENSEMBLE_SEEDS})")
     return models, sc
 
 
