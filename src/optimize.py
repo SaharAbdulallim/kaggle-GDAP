@@ -169,10 +169,16 @@ def run_optimization(
             train_scores.append(f1_score(y_fold, clf.predict(Xtr), average="macro"))
             val_scores.append(f1_score(y[va], clf.predict(Xva), average="macro"))
         mean_val = np.mean(val_scores)
-        mean_gap = np.mean(train_scores) - mean_val
+        mean_train = np.mean(train_scores)
+        mean_gap = mean_train - mean_val
+
         trial.set_user_attr("val_f1", mean_val)
+        trial.set_user_attr("train_f1", mean_train)
         trial.set_user_attr("gap", mean_gap)
-        return mean_val
+
+        # Penalize overfitting: if gap > 0.15, reduce score proportionally
+        gap_penalty = max(0, mean_gap - 0.15) * 0.5
+        return mean_val - gap_penalty
 
     study = optuna.create_study(
         direction="maximize",

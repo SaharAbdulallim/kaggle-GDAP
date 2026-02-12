@@ -67,7 +67,7 @@ if args.run_optuna:
     cfg.LGB_PARAMS = result["params"]
     cfg.PSEUDO_THRESHOLD = result.get("pseudo_threshold", cfg.PSEUDO_THRESHOLD)
     cfg.VAR_THRESHOLD = result["var_threshold"]
-    print(f"Best F1: {result['best_f1']:.4f}")
+    print(f"Best F1: {result['best_f1']:.4f}  |  Gap: {result['best_gap']:.4f}")
     print(f"Params: {cfg.LGB_PARAMS}")
     print(
         f"Pseudo threshold: {cfg.PSEUDO_THRESHOLD:.2f}, Var threshold: {cfg.VAR_THRESHOLD:.2e}"
