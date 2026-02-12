@@ -35,7 +35,7 @@ class CFG:
         }
     )
 
-    HEALTH_WEIGHT: float = 1.2897897441824462
+    HEALTH_WEIGHT: float = 1.0  # disable
     PSEUDO_THRESHOLD: float = 0.75
     PSEUDO_WEIGHT: float = 0.5405074842498068
     VAR_THRESHOLD: float = 1e-8

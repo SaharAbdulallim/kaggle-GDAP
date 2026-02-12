@@ -64,7 +64,6 @@ def evaluate(
     X: np.ndarray,
     y: np.ndarray,
     params: dict,
-    health_weight: float,
     n_folds: int = 5,
     seed: int = 42,
     X_pseudo: np.ndarray | None = None,
@@ -103,9 +102,8 @@ def evaluate(
         Xtr = _to_df(sc.fit_transform(X_fold), n)
         Xva = _to_df(sc.transform(X[va]), n)
         w = np.ones(len(y_fold))
-        w[y_fold == 0] = health_weight
         if X_pseudo is not None and len(X_pseudo) > 0:
-            w[len(y[tr]) :] *= pseudo_weight
+            w[len(y[tr]) :] = pseudo_weight
         clf = LGBMClassifier(**params, verbose=-1, random_state=seed)
         _fit(clf, Xtr, y_fold, w)
         best_iters.append(params.get("n_estimators"))
@@ -155,12 +153,12 @@ def run_optimization(
             "skip_drop": trial.suggest_float("skip_drop", 0.3, 0.7),
             "max_drop": trial.suggest_int("max_drop", 20, 100),
         }
-        hw = trial.suggest_float("health_weight", 1.0, 3.0)
         pw = (
             trial.suggest_float("pseudo_weight", 0.1, 1.0)
             if X_pseudo is not None
             else 0.5
         )
+        pseudo_threshold = trial.suggest_float("pseudo_threshold", 0.65, 0.90)
         var_threshold = trial.suggest_float("var_threshold", 1e-10, 1e-4, log=True)
 
         selector = VarianceThreshold(threshold=var_threshold)
@@ -197,9 +195,8 @@ def run_optimization(
             Xtr = _to_df(sc.fit_transform(X_fold), n)
             Xva = _to_df(sc.transform(X_filtered[va]), n)
             w = np.ones(len(y_fold))
-            w[y_fold == 0] *= hw
             if X_pseudo is not None and len(X_pseudo) > 0:
-                w[len(y[tr]) :] *= pw
+                w[len(y[tr]) :] = pw
             clf = LGBMClassifier(**p, verbose=-1, random_state=cfg.SEED)
             _fit(clf, Xtr, y_fold, w)
             train_scores.append(f1_score(y_fold, clf.predict(Xtr), average="macro"))
@@ -220,13 +217,13 @@ def run_optimization(
 
     bt = study.best_trial
     best = dict(bt.params)
-    hw = best.pop("health_weight")
     pw = best.pop("pseudo_weight", cfg.PSEUDO_WEIGHT)
+    pseudo_thresh = best.pop("pseudo_threshold", cfg.PSEUDO_THRESHOLD)
     var_thresh = best.pop("var_threshold")
     return {
         "params": best,
-        "health_weight": hw,
         "pseudo_weight": pw,
+        "pseudo_threshold": pseudo_thresh,
         "var_threshold": var_thresh,
         "best_f1": study.best_value,
         "best_gap": bt.user_attrs.get("gap", 0.0),
@@ -266,9 +263,8 @@ def train_final(
     sc = StandardScaler()
     Xtr = _to_df(sc.fit_transform(X_all), X_train.shape[1])
     w = np.ones(len(y_all))
-    w[y_all == 0] = cfg.HEALTH_WEIGHT
     if X_pseudo is not None and len(X_pseudo) > 0:
-        w[len(y_train) :] *= cfg.PSEUDO_WEIGHT
+        w[len(y_train) :] = cfg.PSEUDO_WEIGHT
 
     models = []
     for s in cfg.PSEUDO_SEEDS:
