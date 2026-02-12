@@ -19,24 +19,23 @@ class CFG:
 
     LGB_PARAMS: dict = field(
         default_factory=lambda: {
-            "n_estimators": 2425,
+            "n_estimators": 1200,
             "max_depth": 4,
-            "learning_rate": 0.017202488117011486,
-            "subsample": 0.5353952394175464,
-            "colsample_bytree": 0.4424202471887338,
-            "min_child_samples": 11,
-            "reg_alpha": 1.927937584863159,
-            "reg_lambda": 1.0161807863995584,
-            "num_leaves": 10,
-            "boosting_type": "dart",
-            "drop_rate": 0.09179696963549172,
-            "skip_drop": 0.6633063543866614,
-            "max_drop": 39,
-            "class_weight": "balanced",
+            "learning_rate": 0.025,
+            "subsample": 0.6,
+            "colsample_bytree": 0.4,
+            "min_child_samples": 30,
+            "reg_alpha": 5.0,
+            "reg_lambda": 5.0,
+            "num_leaves": 8,
+            "boosting_type": "gbdt",
+            "min_split_gain": 0.05,
+            "path_smooth": 1.0,
+            "extra_trees": True,
+            "class_weight": {0: 1.8, 1: 1.0, 2: 1.0},
         }
     )
 
-    HEALTH_WEIGHT: float = 1.0  # disable
     PSEUDO_THRESHOLD: float = 0.75
     PSEUDO_WEIGHT: float = 0.5405074842498068
     VAR_THRESHOLD: float = 1e-8

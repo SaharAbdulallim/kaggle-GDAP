@@ -1,3 +1,4 @@
+import lightgbm as lgb
 import numpy as np
 import optuna
 import pandas as pd
@@ -7,9 +8,7 @@ from sklearn.metrics import f1_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
-from src.augment import create_augmented_batch
 from src.config import CFG
-from src.features import extract_batch
 
 
 def _to_df(arr, n_cols):
@@ -36,8 +35,19 @@ def get_feature_importance(X: np.ndarray, y: np.ndarray, cfg: CFG) -> np.ndarray
     return np.argsort(-clf.feature_importances_)
 
 
-def _fit(clf, Xtr, ytr):
-    clf.fit(Xtr, ytr)
+def _fit(clf, Xtr, ytr, Xval=None, yval=None, early_stop=50):
+    if Xval is not None and yval is not None:
+        clf.fit(
+            Xtr,
+            ytr,
+            eval_set=[(Xval, yval)],
+            callbacks=[
+                lgb.early_stopping(early_stop, verbose=False),
+                lgb.log_evaluation(period=0),
+            ],
+        )
+    else:
+        clf.fit(Xtr, ytr)
     return clf
 
 
@@ -66,48 +76,37 @@ def evaluate(
     seed: int = 42,
     X_pseudo: np.ndarray | None = None,
     y_pseudo: np.ndarray | None = None,
-    samples: list | None = None,
-    use_augmentation: bool = True,
-    aug_factor: int = 2,
-    top_idx: np.ndarray | None = None,
 ) -> dict:
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     preds = np.zeros(len(y), dtype=int)
     train_scores, val_scores, best_iters = [], [], []
     n = X.shape[1]
     for fold_i, (tr, va) in enumerate(skf.split(X, y)):
-        if use_augmentation and samples is not None:
-            train_samples = [samples[i] for i in tr]
-            aug_samples, aug_labels = create_augmented_batch(
-                train_samples, y[tr], aug_factor=aug_factor
-            )
-            X_aug = extract_batch(aug_samples)
-            if top_idx is not None:
-                X_aug = X_aug[:, top_idx]
-            if X_pseudo is not None and len(X_pseudo) > 0:
-                X_fold = np.vstack([X_aug, X_pseudo])
-                y_fold = np.concatenate([aug_labels, y_pseudo])
-            else:
-                X_fold, y_fold = X_aug, aug_labels
+        if X_pseudo is not None and len(X_pseudo) > 0:
+            X_fold = np.vstack([X[tr], X_pseudo])
+            y_fold = np.concatenate([y[tr], y_pseudo])
         else:
-            if X_pseudo is not None and len(X_pseudo) > 0:
-                X_fold = np.vstack([X[tr], X_pseudo])
-                y_fold = np.concatenate([y[tr], y_pseudo])
-            else:
-                X_fold, y_fold = X[tr], y[tr]
+            X_fold, y_fold = X[tr], y[tr]
         sc = StandardScaler()
         Xtr = _to_df(sc.fit_transform(X_fold), n)
         Xva = _to_df(sc.transform(X[va]), n)
         clf = LGBMClassifier(**params, verbose=-1, random_state=seed)
-        _fit(clf, Xtr, y_fold)
-        best_iters.append(params.get("n_estimators"))
+        _fit(clf, Xtr, y_fold, Xva, y[va], early_stop=50)
+        actual_trees = (
+            clf.n_estimators_
+            if hasattr(clf, "n_estimators_")
+            else clf.best_iteration_
+            if hasattr(clf, "best_iteration_")
+            else params.get("n_estimators")
+        )
+        best_iters.append(actual_trees)
         tr_f1 = f1_score(y_fold, clf.predict(Xtr), average="macro")
         preds[va] = clf.predict(Xva)
         va_f1 = f1_score(y[va], preds[va], average="macro")
         train_scores.append(tr_f1)
         val_scores.append(va_f1)
         print(
-            f"  Fold {fold_i}: train_f1={tr_f1:.4f}  val_f1={va_f1:.4f}  gap={tr_f1 - va_f1:.4f}  trees={params.get('n_estimators')}"
+            f"  Fold {fold_i}: train_f1={tr_f1:.4f}  val_f1={va_f1:.4f}  gap={tr_f1 - va_f1:.4f}  trees={actual_trees}"
         )
     return {
         "val_f1": np.mean(val_scores),
@@ -125,29 +124,27 @@ def run_optimization(
     cfg: CFG,
     X_pseudo: np.ndarray | None = None,
     y_pseudo: np.ndarray | None = None,
-    samples: list | None = None,
-    use_augmentation: bool = True,
-    top_idx: np.ndarray | None = None,
 ) -> dict:
     def objective(trial):
         p = {
-            "n_estimators": trial.suggest_int("n_estimators", 500, 2500),
-            "max_depth": trial.suggest_int("max_depth", 3, 8),
-            "learning_rate": trial.suggest_float(
-                "learning_rate", 0.005, 0.06, log=True
-            ),
-            "subsample": trial.suggest_float("subsample", 0.4, 0.85),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.3, 0.8),
-            "min_child_samples": trial.suggest_int("min_child_samples", 10, 60),
-            "reg_alpha": trial.suggest_float("reg_alpha", 0.05, 20.0, log=True),
-            "reg_lambda": trial.suggest_float("reg_lambda", 0.05, 20.0, log=True),
-            "num_leaves": trial.suggest_int("num_leaves", 8, 50),
-            "boosting_type": "dart",
-            "drop_rate": trial.suggest_float("drop_rate", 0.05, 0.2),
-            "skip_drop": trial.suggest_float("skip_drop", 0.3, 0.7),
-            "max_drop": trial.suggest_int("max_drop", 20, 100),
+            "n_estimators": trial.suggest_int("n_estimators", 300, 1200),
+            "max_depth": trial.suggest_int("max_depth", 2, 5),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
+            "subsample": trial.suggest_float("subsample", 0.5, 0.8),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.3, 0.6),
+            "min_child_samples": trial.suggest_int("min_child_samples", 30, 100),
+            "reg_alpha": trial.suggest_float("reg_alpha", 1.0, 50.0, log=True),
+            "reg_lambda": trial.suggest_float("reg_lambda", 1.0, 50.0, log=True),
+            "num_leaves": trial.suggest_int("num_leaves", 4, 15),
+            "boosting_type": "gbdt",
+            "min_split_gain": trial.suggest_float("min_split_gain", 0.01, 0.5),
+            "path_smooth": trial.suggest_float("path_smooth", 0.0, 5.0),
+            "extra_trees": trial.suggest_categorical("extra_trees", [True, False]),
         }
-        pseudo_threshold = trial.suggest_float("pseudo_threshold", 0.65, 0.90)
+        health_weight = trial.suggest_float("health_weight", 1.0, 3.0)
+        p["class_weight"] = {0: health_weight, 1: 1.0, 2: 1.0}
+
+        pseudo_threshold = trial.suggest_float("pseudo_threshold", 0.75, 0.95)
         var_threshold = trial.suggest_float("var_threshold", 1e-10, 1e-4, log=True)
 
         selector = VarianceThreshold(threshold=var_threshold)
@@ -158,28 +155,12 @@ def run_optimization(
         )
         val_scores, train_scores = [], []
         for tr, va in skf.split(X_filtered, y):
-            if use_augmentation and samples is not None:
-                train_samples = [samples[i] for i in tr]
-                aug_samples, aug_labels = create_augmented_batch(
-                    train_samples, y[tr], aug_factor=1
-                )
-                X_aug = extract_batch(aug_samples)
-                if top_idx is not None:
-                    X_aug = X_aug[:, top_idx]
-                X_aug_filtered = selector.transform(X_aug)
-                if X_pseudo is not None and len(X_pseudo) > 0:
-                    X_pseudo_filtered = selector.transform(X_pseudo)
-                    X_fold = np.vstack([X_aug_filtered, X_pseudo_filtered])
-                    y_fold = np.concatenate([aug_labels, y_pseudo])
-                else:
-                    X_fold, y_fold = X_aug_filtered, aug_labels
+            if X_pseudo is not None and len(X_pseudo) > 0:
+                X_pseudo_filtered = selector.transform(X_pseudo)
+                X_fold = np.vstack([X_filtered[tr], X_pseudo_filtered])
+                y_fold = np.concatenate([y[tr], y_pseudo])
             else:
-                if X_pseudo is not None and len(X_pseudo) > 0:
-                    X_pseudo_filtered = selector.transform(X_pseudo)
-                    X_fold = np.vstack([X_filtered[tr], X_pseudo_filtered])
-                    y_fold = np.concatenate([y[tr], y_pseudo])
-                else:
-                    X_fold, y_fold = X_filtered[tr], y[tr]
+                X_fold, y_fold = X_filtered[tr], y[tr]
             sc = StandardScaler()
             Xtr = _to_df(sc.fit_transform(X_fold), n)
             Xva = _to_df(sc.transform(X_filtered[va]), n)
@@ -205,6 +186,8 @@ def run_optimization(
     best = dict(bt.params)
     pseudo_thresh = best.pop("pseudo_threshold", cfg.PSEUDO_THRESHOLD)
     var_thresh = best.pop("var_threshold")
+    health_weight = best.pop("health_weight", 1.5)
+    best["class_weight"] = {0: health_weight, 1: 1.0, 2: 1.0}
     return {
         "params": best,
         "pseudo_threshold": pseudo_thresh,
@@ -220,29 +203,12 @@ def train_final(
     cfg: CFG,
     X_pseudo: np.ndarray | None = None,
     y_pseudo: np.ndarray | None = None,
-    samples: list | None = None,
-    use_augmentation: bool = True,
-    aug_factor: int = 3,
-    top_idx: np.ndarray | None = None,
 ):
-    if use_augmentation and samples is not None:
-        aug_samples, aug_labels = create_augmented_batch(
-            samples, y_train, aug_factor=aug_factor
-        )
-        X_aug = extract_batch(aug_samples)
-        if top_idx is not None:
-            X_aug = X_aug[:, top_idx]
-        if X_pseudo is not None and len(X_pseudo) > 0:
-            X_all = np.vstack([X_aug, X_pseudo])
-            y_all = np.concatenate([aug_labels, y_pseudo])
-        else:
-            X_all, y_all = X_aug, aug_labels
+    if X_pseudo is not None and len(X_pseudo) > 0:
+        X_all = np.vstack([X_train, X_pseudo])
+        y_all = np.concatenate([y_train, y_pseudo])
     else:
-        if X_pseudo is not None and len(X_pseudo) > 0:
-            X_all = np.vstack([X_train, X_pseudo])
-            y_all = np.concatenate([y_train, y_pseudo])
-        else:
-            X_all, y_all = X_train, y_train
+        X_all, y_all = X_train, y_train
 
     sc = StandardScaler()
     Xtr = _to_df(sc.fit_transform(X_all), X_train.shape[1])

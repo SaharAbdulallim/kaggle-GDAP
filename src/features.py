@@ -240,8 +240,10 @@ def extract(sample) -> np.ndarray:
     pixels = hs.reshape(-1, 125)
     band_means = pixels.mean(axis=0)
     band_stds = pixels.std(axis=0)
-    feats.extend(band_means.tolist())
-    feats.extend(band_stds.tolist())
+    # Use clean bands only (10-110), avoiding noisy sensor edges
+    clean_slice = slice(10, 111)
+    feats.extend(band_means[clean_slice].tolist())
+    feats.extend(band_stds[clean_slice].tolist())
 
     # HS spectral indices at pixel level
     red_hs = pixels[:, 30:45].mean(1)
@@ -257,15 +259,15 @@ def extract(sample) -> np.ndarray:
     for arr in (ndvi_hs, ndre_hs, red_nir, reip, reip_val):
         feats.extend(_array_stats(arr))
 
-    # Spectral heterogeneity
-    cv_pb = band_stds / (band_means + EPS)
+    # Spectral heterogeneity (clean bands only)
+    cv_pb = band_stds[clean_slice] / (band_means[clean_slice] + EPS)
     feats.extend(
         [
             cv_pb.mean(),
             cv_pb.std(),
-            cv_pb[:40].mean(),
-            cv_pb[40:65].mean(),
-            cv_pb[75:].mean(),
+            cv_pb[:30].mean(),  # vis: bands 10-40
+            cv_pb[30:55].mean(),  # red-edge: bands 40-65
+            cv_pb[65:].mean(),  # nir: bands 75-110
         ]
     )
 
@@ -275,21 +277,21 @@ def extract(sample) -> np.ndarray:
         [d1[45:75].max(), float(d1[45:75].argmax()), d1[45:75].mean(), d1[45:75].std()]
     )
 
-    # Region ratios
+    # Region ratios (clean bands: 10-110)
     vis, re_r, nir_r = (
-        band_means[:40].mean(),
+        band_means[10:40].mean(),
         band_means[40:65].mean(),
-        band_means[75:].mean(),
+        band_means[75:110].mean(),
     )
     feats.extend([vis / (nir_r + EPS), re_r / (nir_r + EPS), vis / (re_r + EPS)])
 
-    # HS narrow-band ratios (disease-specific)
+    # HS narrow-band ratios (disease-specific, clean bands)
     pri = (band_means[20] - band_means[30]) / (band_means[20] + band_means[30] + EPS)
     ari = 1.0 / (band_means[25] + EPS) - 1.0 / (band_means[62] + EPS)
-    cri = 1.0 / (band_means[15] + EPS) - 1.0 / (band_means[25] + EPS)
+    cri = 1.0 / (band_means[18] + EPS) - 1.0 / (band_means[28] + EPS)  # shifted from 15
     feats.extend([pri, ari, cri])
 
-    key_bands = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]
+    key_bands = [12, 22, 32, 42, 52, 62, 72, 82, 92, 102]  # clean range 10-110
     for i in range(len(key_bands)):
         for j in range(i + 1, len(key_bands)):
             bi, bj = key_bands[i], key_bands[j]
@@ -302,9 +304,41 @@ def extract(sample) -> np.ndarray:
         window = pixels[:, start:end].mean(1)
         feats.extend([window.mean(), window.std(), skew(window), kurtosis(window)])
 
-    for s, e in [(0, 30), (30, 50), (50, 70), (70, 100), (100, 125)]:
+    for s, e in [(10, 30), (30, 50), (50, 70), (70, 95), (95, 110)]:
         region = band_means[s:e]
         feats.extend([region.mean(), region.std()])
+
+    # ---- Discriminative features from spectral signature analysis ----
+    # NIR plateau level (Health~3000 > Rust~2900 > Other~2200)
+    nir_plateau = band_means[80:105].mean()
+    feats.append(nir_plateau)
+
+    # Green peak prominence (Rust shows bump at 20-30 relative to neighbors)
+    green_region = band_means[20:30].mean()
+    green_neighbors = (band_means[12:18].mean() + band_means[32:38].mean()) / 2
+    green_prominence = green_region - green_neighbors
+    feats.extend([green_prominence, green_region / (green_neighbors + EPS)])
+
+    # Red-edge slope steepness (60-75): Health steeper than Other
+    re_slope = (band_means[75] - band_means[60]) / 15.0
+    feats.append(re_slope)
+
+    # Red-edge inflection point (where max derivative occurs)
+    re_derivs = np.diff(band_means[55:80])
+    re_inflection = np.argmax(re_derivs) + 55
+    feats.append(float(re_inflection))
+
+    # Visible/NIR contrast (Other: high vis, low NIR)
+    vis_level = band_means[30:55].mean()
+    vis_nir_contrast = vis_level - nir_plateau
+    vis_nir_ratio = vis_level / (nir_plateau + EPS)
+    feats.extend([vis_nir_contrast, vis_nir_ratio])
+
+    # NIR shape: plateau flatness (Health/Rust flat, Other slopes down)
+    nir_early = band_means[80:90].mean()
+    nir_late = band_means[95:105].mean()
+    nir_slope = nir_late - nir_early
+    feats.append(nir_slope)
 
     # ---- HS zero-pixel fraction (blank/dead tissue indicator) ----
     zero_mask = np.all(hs < 1, axis=2)
@@ -359,7 +393,7 @@ def extract(sample) -> np.ndarray:
         feats.append(ndvi_ms_v - ndvi_hs_v)
         feats.append(ndvi_ms_v * ndvi_hs_v)
 
-        hs_ranges = [(5, 15), (20, 30), (38, 48), (55, 65), (80, 100)]
+        hs_ranges = [(12, 22), (22, 32), (38, 48), (55, 65), (80, 100)]  # clean bands
         for band_idx in range(5):
             ms_std = ms[:, :, band_idx].std()
             hs_spatial = hs[:, :, hs_ranges[band_idx][0] : hs_ranges[band_idx][1]].mean(
