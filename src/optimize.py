@@ -5,10 +5,46 @@ import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import f1_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from src.config import CFG
+
+
+def detect_noisy_samples(
+    X: np.ndarray,
+    y: np.ndarray,
+    conf_threshold: float = 0.3,
+    n_folds: int = 5,
+    seed: int = 42,
+    params: dict = None,
+) -> dict:
+    """Detect mislabeled samples via OOF predictions. Samples with low confidence are noisy."""
+    X_df = _to_df(X, X.shape[1])
+    scaler = StandardScaler().set_output(transform="pandas")
+
+    model_params = (
+        params.copy()
+        if params
+        else {"n_estimators": 300, "max_depth": 4, "verbose": -1, "random_state": seed}
+    )
+    if "class_weight" in model_params:
+        model_params.pop("class_weight")
+    model_params["verbose"] = -1
+    model_params["random_state"] = seed
+
+    pipe = make_pipeline(
+        scaler,
+        LGBMClassifier(**model_params),
+    )
+    cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    probs = cross_val_predict(pipe, X_df, y, cv=cv, method="predict_proba")
+
+    label_conf = probs[np.arange(len(y)), y]
+    noisy_mask = label_conf < conf_threshold
+
+    return {"label_confidence": label_conf, "noisy_mask": noisy_mask}
 
 
 def _to_df(arr, n_cols):
@@ -124,24 +160,26 @@ def run_optimization(
             "path_smooth": trial.suggest_float("path_smooth", 0.0, 5.0),
             "extra_trees": trial.suggest_categorical("extra_trees", [True, False]),
         }
-        # Constrain health weight to avoid Rust→Health errors
         health_weight = trial.suggest_float("health_weight", 1.0, 1.5)
         p["class_weight"] = {0: health_weight, 1: 1.0, 2: 1.0}
 
         var_threshold = trial.suggest_float("var_threshold", 1e-10, 1e-4, log=True)
 
-        selector = VarianceThreshold(threshold=var_threshold)
-        X_filtered = selector.fit_transform(X_sel)
-        n = X_filtered.shape[1]
         skf = StratifiedKFold(
             n_splits=cfg.CV_FOLDS, shuffle=True, random_state=cfg.SEED
         )
         val_scores, train_scores = [], []
-        for tr, va in skf.split(X_filtered, y):
-            X_fold, y_fold = X_filtered[tr], y[tr]
+        for tr, va in skf.split(X_sel, y):
+            # Fit variance threshold on training fold only
+            selector = VarianceThreshold(threshold=var_threshold)
+            X_fold_filtered = selector.fit_transform(X_sel[tr])
+            X_val_filtered = selector.transform(X_sel[va])
+            y_fold = y[tr]
+
+            n = X_fold_filtered.shape[1]
             sc = StandardScaler()
-            Xtr = _to_df(sc.fit_transform(X_fold), n)
-            Xva = _to_df(sc.transform(X_filtered[va]), n)
+            Xtr = _to_df(sc.fit_transform(X_fold_filtered), n)
+            Xva = _to_df(sc.transform(X_val_filtered), n)
             clf = LGBMClassifier(**p, verbose=-1, random_state=cfg.SEED)
             _fit(clf, Xtr, y_fold, Xva, y[va], early_stop=50)
             train_scores.append(f1_score(y_fold, clf.predict(Xtr), average="macro"))
@@ -154,8 +192,8 @@ def run_optimization(
         trial.set_user_attr("train_f1", mean_train)
         trial.set_user_attr("gap", mean_gap)
 
-        # Stronger gap penalty: target gap < 0.12
-        gap_penalty = max(0, mean_gap - 0.12) * 1.0
+        # Gap penalty: target gap < 0.12
+        gap_penalty = max(0, mean_gap - 0.07) * 1.0
         return mean_val - gap_penalty
 
     study = optuna.create_study(

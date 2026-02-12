@@ -12,31 +12,32 @@ class CFG:
     CLASSES: tuple = ("Health", "Other", "Rust")
     N_CLASSES: int = 3
 
-    N_TOP_FEATURES: int = 80
+    N_TOP_FEATURES: int = 60
+    NOISE_CONF_THRESHOLD: float = 0.3
     OPTUNA_TRIALS: int = 40
     CV_FOLDS: int = 5
     SEED: int = 62
 
     LGB_PARAMS: dict = field(
         default_factory=lambda: {
-            "n_estimators": 885,
+            "n_estimators": 617,
             "max_depth": 5,
-            "learning_rate": 0.0358,
-            "subsample": 0.608,
-            "colsample_bytree": 0.492,
-            "min_child_samples": 94,
-            "reg_alpha": 3.64,
-            "reg_lambda": 2.94,
-            "num_leaves": 11,
+            "learning_rate": 0.06052076336782357,
+            "subsample": 0.6698292354683619,
+            "colsample_bytree": 0.3245341724635894,
+            "min_child_samples": 32,
+            "reg_alpha": 3.7944415835594603,
+            "reg_lambda": 1.3637126525696954,
+            "num_leaves": 14,
             "boosting_type": "gbdt",
-            "min_split_gain": 0.229,
-            "path_smooth": 0.27,
+            "min_split_gain": 0.2798089579584129,
+            "path_smooth": 0.25651772044294585,
             "extra_trees": True,
-            "class_weight": {0: 1.31, 1: 1.0, 2: 1.0},
+            "class_weight": {0: 1.4948697962589994, 1: 1.0, 2: 1.0},
         }
     )
 
-    VAR_THRESHOLD: float = 1.4e-8
+    VAR_THRESHOLD: float = 5.49e-10
     ENSEMBLE_SEEDS: tuple = (42, 123, 456)
 
     BLANK_SAMPLES: frozenset = frozenset(
