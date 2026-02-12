@@ -359,6 +359,41 @@ def extract(sample) -> np.ndarray:
     nir_region = hs[:, :, 80:100].mean(axis=2)
     feats.extend([nir_region.std(), nir_region.mean() / (nir_region.std() + EPS)])
 
+    # ---- Health vs Rust discriminative: within-sample consistency ----
+    # Rust has low CV (consistent), Health has high CV (variable)
+    cv_per_band = band_stds[10:110] / (band_means[10:110] + EPS)
+    feats.extend(
+        [
+            cv_per_band.mean(),
+            cv_per_band.std(),
+            cv_per_band.min(),
+            cv_per_band.max(),
+            np.percentile(cv_per_band, 25),
+            np.percentile(cv_per_band, 75),
+        ]
+    )
+
+    # Per-pixel spectral shape consistency
+    pixel_means = pixels[:, 10:110].mean(axis=1)
+    pixel_stds = pixels[:, 10:110].std(axis=1)
+    pixel_cv = pixel_stds / (pixel_means + EPS)
+    feats.extend(
+        [
+            pixel_cv.mean(),
+            pixel_cv.std(),
+            np.percentile(pixel_cv, 10),
+            np.percentile(pixel_cv, 90),
+        ]
+    )
+
+    # NIR band consistency (Rust very consistent ~261 std)
+    nir_cv = band_stds[80:100] / (band_means[80:100] + EPS)
+    feats.extend([nir_cv.mean(), nir_cv.std()])
+
+    # Red-edge consistency
+    re_cv = band_stds[50:65] / (band_means[50:65] + EPS)
+    feats.extend([re_cv.mean(), re_cv.std()])
+
     # ======================== Cross-modal ========================
     if ms is not None:
         nir_ms_m = ms[:, :, 4].mean()

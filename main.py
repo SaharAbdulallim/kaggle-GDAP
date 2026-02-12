@@ -2,7 +2,7 @@ import argparse
 import os
 
 import numpy as np
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, confusion_matrix
 
 from src.config import CFG
 from src.data import load_test, load_train
@@ -76,6 +76,12 @@ print(
     f"\nTrain F1: {ev['train_f1']:.4f}  |  Val F1: {ev['val_f1']:.4f}  |  Gap: {ev['train_f1'] - ev['val_f1']:.4f}"
 )
 print(classification_report(labels, ev["preds"], target_names=list(cfg.CLASSES)))
+
+cm = confusion_matrix(labels, ev["preds"])
+print("Confusion Matrix:")
+print("          Pred_H  Pred_O  Pred_R")
+for i, name in enumerate(cfg.CLASSES):
+    print(f"{name:>8}  {cm[i, 0]:>5}   {cm[i, 1]:>5}   {cm[i, 2]:>5}")
 
 print("\nTraining final models...")
 models, sc = train_final(

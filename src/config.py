@@ -19,24 +19,24 @@ class CFG:
 
     LGB_PARAMS: dict = field(
         default_factory=lambda: {
-            "n_estimators": 1200,
+            "n_estimators": 937,
             "max_depth": 4,
-            "learning_rate": 0.025,
-            "subsample": 0.6,
-            "colsample_bytree": 0.4,
+            "learning_rate": 0.0333,
+            "subsample": 0.754,
+            "colsample_bytree": 0.507,
             "min_child_samples": 30,
-            "reg_alpha": 5.0,
-            "reg_lambda": 5.0,
+            "reg_alpha": 2.77,
+            "reg_lambda": 14.66,
             "num_leaves": 8,
             "boosting_type": "gbdt",
-            "min_split_gain": 0.05,
-            "path_smooth": 1.0,
+            "min_split_gain": 0.393,
+            "path_smooth": 4.14,
             "extra_trees": True,
-            "class_weight": {0: 1.8, 1: 1.0, 2: 1.0},
+            "class_weight": {0: 1.27, 1: 1.0, 2: 1.0},
         }
     )
 
-    VAR_THRESHOLD: float = 1e-8
+    VAR_THRESHOLD: float = 1.3e-9
     ENSEMBLE_SEEDS: tuple = (42, 123, 456)
 
     BLANK_SAMPLES: frozenset = frozenset(

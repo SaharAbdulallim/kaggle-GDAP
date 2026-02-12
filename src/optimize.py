@@ -116,7 +116,8 @@ def run_optimization(
             "path_smooth": trial.suggest_float("path_smooth", 0.0, 5.0),
             "extra_trees": trial.suggest_categorical("extra_trees", [True, False]),
         }
-        health_weight = trial.suggest_float("health_weight", 1.0, 3.0)
+        # Constrain health weight to avoid Rust→Health errors
+        health_weight = trial.suggest_float("health_weight", 1.0, 1.5)
         p["class_weight"] = {0: health_weight, 1: 1.0, 2: 1.0}
 
         var_threshold = trial.suggest_float("var_threshold", 1e-10, 1e-4, log=True)
@@ -134,7 +135,7 @@ def run_optimization(
             Xtr = _to_df(sc.fit_transform(X_fold), n)
             Xva = _to_df(sc.transform(X_filtered[va]), n)
             clf = LGBMClassifier(**p, verbose=-1, random_state=cfg.SEED)
-            _fit(clf, Xtr, y_fold)
+            _fit(clf, Xtr, y_fold, Xva, y[va], early_stop=50)
             train_scores.append(f1_score(y_fold, clf.predict(Xtr), average="macro"))
             val_scores.append(f1_score(y[va], clf.predict(Xva), average="macro"))
         mean_val = np.mean(val_scores)
@@ -145,8 +146,8 @@ def run_optimization(
         trial.set_user_attr("train_f1", mean_train)
         trial.set_user_attr("gap", mean_gap)
 
-        # Penalize overfitting: if gap > 0.15, reduce score proportionally
-        gap_penalty = max(0, mean_gap - 0.15) * 0.5
+        # Stronger gap penalty: target gap < 0.12
+        gap_penalty = max(0, mean_gap - 0.12) * 1.0
         return mean_val - gap_penalty
 
     study = optuna.create_study(
@@ -159,13 +160,11 @@ def run_optimization(
 
     bt = study.best_trial
     best = dict(bt.params)
-    pseudo_thresh = best.pop("pseudo_threshold", cfg.PSEUDO_THRESHOLD)
     var_thresh = best.pop("var_threshold")
     health_weight = best.pop("health_weight", 1.5)
     best["class_weight"] = {0: health_weight, 1: 1.0, 2: 1.0}
     return {
         "params": best,
-        "pseudo_threshold": pseudo_thresh,
         "var_threshold": var_thresh,
         "best_f1": study.best_value,
         "best_gap": bt.user_attrs.get("gap", 0.0),
