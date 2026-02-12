@@ -131,35 +131,14 @@ def extract(sample) -> np.ndarray:
     hs, ms, rgb = sample["hs"], sample["ms"], sample["rgb"]
     feats = []
 
-    # ======================== MS ========================
+    # ======================== MS (texture only - spectral redundant with HS) ========================
     if ms is not None:
-        nir, red, re, green, blue = (
-            ms[:, :, 4],
-            ms[:, :, 2],
-            ms[:, :, 3],
-            ms[:, :, 1],
-            ms[:, :, 0],
-        )
+        nir, red, re, green = ms[:, :, 4], ms[:, :, 2], ms[:, :, 3], ms[:, :, 1]
 
-        # Per-band stats (5 x 11 = 55)
-        for b in range(5):
-            feats.extend(_band_stats(ms[:, :, b]))
-
-        # Vegetation indices (5 x 12 = 60)
+        # MS has 2x resolution (64x64 vs HS 32x32) - use for texture only
         ndvi = (nir - red) / (nir + red + EPS)
-        ndre = (nir - re) / (nir + re + EPS)
-        gndvi = (nir - green) / (nir + green + EPS)
-        savi = 1.5 * (nir - red) / (nir + red + 0.5 + EPS)
-        evi = 2.5 * (nir - red) / (nir + 6 * red - 7.5 * blue + 1 + EPS)
-        for idx in (ndvi, ndre, gndvi, savi, evi):
-            feats.extend(_index_stats(idx))
 
-        # Band ratios (10)
-        for i in range(5):
-            for j in range(i + 1, 5):
-                feats.append(ms[:, :, i].mean() / (ms[:, :, j].mean() + EPS))
-
-        # Texture: GLCM + LBP + Gabor on NDVI, NIR, RedEdge
+        # Texture: GLCM + LBP + Gabor on NDVI, NIR, RedEdge (high-res 64x64)
         ndvi_u8, nir_u8, re_u8 = (
             _normalize_u8(ndvi),
             _normalize_u8(nir),
@@ -204,7 +183,7 @@ def extract(sample) -> np.ndarray:
         feats.extend(_glcm(green_u8, distances=(1, 2), angles=(0, np.pi / 2)))
         feats.extend(_lbp(green_u8))
     else:
-        feats.extend([0] * 700)
+        feats.extend([0] * 584)  # MS texture-only features
 
     # ======================== RGB ========================
     if rgb is not None:
