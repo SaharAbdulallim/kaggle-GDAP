@@ -216,7 +216,7 @@ def run_optimization(
             seed=cfg.SEED, n_startup_trials=min(15, cfg.OPTUNA_TRIALS // 3)
         ),
     )
-    study.optimize(objective, n_trials=cfg.OPTUNA_TRIALS)
+    study.optimize(objective, n_trials=cfg.OPTUNA_TRIALS, n_jobs=-1)
 
     bt = study.best_trial
     best = dict(bt.params)
