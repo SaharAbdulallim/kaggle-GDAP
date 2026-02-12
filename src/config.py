@@ -32,6 +32,7 @@ class CFG:
             "drop_rate": 0.09179696963549172,
             "skip_drop": 0.6633063543866614,
             "max_drop": 39,
+            "class_weight": "balanced",
         }
     )
 

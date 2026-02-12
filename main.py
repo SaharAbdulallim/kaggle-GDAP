@@ -68,18 +68,16 @@ if args.run_optuna:
         top_idx=top_idx[: cfg.N_TOP_FEATURES],
     )
     cfg.LGB_PARAMS = result["params"]
-    cfg.PSEUDO_WEIGHT = result.get("pseudo_weight", cfg.PSEUDO_WEIGHT)
     cfg.PSEUDO_THRESHOLD = result.get("pseudo_threshold", cfg.PSEUDO_THRESHOLD)
     cfg.VAR_THRESHOLD = result["var_threshold"]
     print(f"Best F1: {result['best_f1']:.4f}")
     print(f"Params: {cfg.LGB_PARAMS}")
     print(
-        f"Pseudo weight: {cfg.PSEUDO_WEIGHT:.2f}, Pseudo threshold: {cfg.PSEUDO_THRESHOLD:.2f}, Var threshold: {cfg.VAR_THRESHOLD:.2e}"
+        f"Pseudo threshold: {cfg.PSEUDO_THRESHOLD:.2f}, Var threshold: {cfg.VAR_THRESHOLD:.2e}"
     )
 else:
     print("\nSkipping Optuna, using default params from config")
     print(f"Params: {cfg.LGB_PARAMS}")
-    print(f"Health weight: {cfg.HEALTH_WEIGHT}, Pseudo weight: {cfg.PSEUDO_WEIGHT}")
 
 print("\nEvaluating...")
 ev = evaluate(
@@ -90,7 +88,6 @@ ev = evaluate(
     seed=cfg.SEED,
     X_pseudo=X_pseudo,
     y_pseudo=y_pseudo,
-    pseudo_weight=cfg.PSEUDO_WEIGHT,
     samples=samples,
     use_augmentation=True,
     aug_factor=2,

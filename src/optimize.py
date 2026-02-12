@@ -36,8 +36,8 @@ def get_feature_importance(X: np.ndarray, y: np.ndarray, cfg: CFG) -> np.ndarray
     return np.argsort(-clf.feature_importances_)
 
 
-def _fit(clf, Xtr, ytr, w):
-    clf.fit(Xtr, ytr, sample_weight=w)
+def _fit(clf, Xtr, ytr):
+    clf.fit(Xtr, ytr)
     return clf
 
 
@@ -49,9 +49,7 @@ def generate_pseudo_labels(X_train, y_train, X_test, cfg: CFG):
     probs = np.zeros((len(X_test), cfg.N_CLASSES))
     for seed in cfg.PSEUDO_SEEDS:
         clf = LGBMClassifier(**cfg.LGB_PARAMS, verbose=-1, random_state=seed)
-        w = np.ones(len(y_train))
-        w[y_train == 0] = cfg.HEALTH_WEIGHT
-        clf.fit(Xtr, y_train, sample_weight=w)
+        clf.fit(Xtr, y_train)
         probs += clf.predict_proba(Xte)
     probs /= len(cfg.PSEUDO_SEEDS)
     preds = probs.argmax(1)
@@ -68,7 +66,6 @@ def evaluate(
     seed: int = 42,
     X_pseudo: np.ndarray | None = None,
     y_pseudo: np.ndarray | None = None,
-    pseudo_weight: float = 0.5,
     samples: list | None = None,
     use_augmentation: bool = True,
     aug_factor: int = 2,
@@ -101,11 +98,8 @@ def evaluate(
         sc = StandardScaler()
         Xtr = _to_df(sc.fit_transform(X_fold), n)
         Xva = _to_df(sc.transform(X[va]), n)
-        w = np.ones(len(y_fold))
-        if X_pseudo is not None and len(X_pseudo) > 0:
-            w[len(y[tr]) :] = pseudo_weight
         clf = LGBMClassifier(**params, verbose=-1, random_state=seed)
-        _fit(clf, Xtr, y_fold, w)
+        _fit(clf, Xtr, y_fold)
         best_iters.append(params.get("n_estimators"))
         tr_f1 = f1_score(y_fold, clf.predict(Xtr), average="macro")
         preds[va] = clf.predict(Xva)
@@ -153,11 +147,6 @@ def run_optimization(
             "skip_drop": trial.suggest_float("skip_drop", 0.3, 0.7),
             "max_drop": trial.suggest_int("max_drop", 20, 100),
         }
-        pw = (
-            trial.suggest_float("pseudo_weight", 0.1, 1.0)
-            if X_pseudo is not None
-            else 0.5
-        )
         pseudo_threshold = trial.suggest_float("pseudo_threshold", 0.65, 0.90)
         var_threshold = trial.suggest_float("var_threshold", 1e-10, 1e-4, log=True)
 
@@ -194,11 +183,8 @@ def run_optimization(
             sc = StandardScaler()
             Xtr = _to_df(sc.fit_transform(X_fold), n)
             Xva = _to_df(sc.transform(X_filtered[va]), n)
-            w = np.ones(len(y_fold))
-            if X_pseudo is not None and len(X_pseudo) > 0:
-                w[len(y[tr]) :] = pw
             clf = LGBMClassifier(**p, verbose=-1, random_state=cfg.SEED)
-            _fit(clf, Xtr, y_fold, w)
+            _fit(clf, Xtr, y_fold)
             train_scores.append(f1_score(y_fold, clf.predict(Xtr), average="macro"))
             val_scores.append(f1_score(y[va], clf.predict(Xva), average="macro"))
         mean_val = np.mean(val_scores)
@@ -217,12 +203,10 @@ def run_optimization(
 
     bt = study.best_trial
     best = dict(bt.params)
-    pw = best.pop("pseudo_weight", cfg.PSEUDO_WEIGHT)
     pseudo_thresh = best.pop("pseudo_threshold", cfg.PSEUDO_THRESHOLD)
     var_thresh = best.pop("var_threshold")
     return {
         "params": best,
-        "pseudo_weight": pw,
         "pseudo_threshold": pseudo_thresh,
         "var_threshold": var_thresh,
         "best_f1": study.best_value,
@@ -262,14 +246,11 @@ def train_final(
 
     sc = StandardScaler()
     Xtr = _to_df(sc.fit_transform(X_all), X_train.shape[1])
-    w = np.ones(len(y_all))
-    if X_pseudo is not None and len(X_pseudo) > 0:
-        w[len(y_train) :] = cfg.PSEUDO_WEIGHT
 
     models = []
     for s in cfg.PSEUDO_SEEDS:
         clf = LGBMClassifier(**cfg.LGB_PARAMS, verbose=-1, random_state=s)
-        clf.fit(Xtr, y_all, sample_weight=w)
+        clf.fit(Xtr, y_all)
         models.append(clf)
     print(f"Trained {len(models)} models (seeds: {cfg.PSEUDO_SEEDS})")
     return models, sc
