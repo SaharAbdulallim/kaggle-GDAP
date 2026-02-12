@@ -42,27 +42,29 @@ print(f"Test features:  {X_test_all.shape}")
 
 print("\nFeature selection...")
 top_idx = get_feature_importance(X_all, labels, cfg)
-X = X_all[:, top_idx[: cfg.N_TOP_FEATURES]]
-X_test = X_test_all[:, top_idx[: cfg.N_TOP_FEATURES]]
-print(f"Selected top {cfg.N_TOP_FEATURES} -> train: {X.shape}, test: {X_test.shape}")
-
-# Pseudo-labeling disabled - ablation showed no benefit, increases overfitting
 
 if args.run_optuna:
     print("\nOptuna HPO...")
     result = run_optimization(
-        X,
+        X_all,
         labels,
         cfg,
+        top_idx=top_idx,
     )
     cfg.LGB_PARAMS = result["params"]
     cfg.VAR_THRESHOLD = result["var_threshold"]
+    cfg.N_TOP_FEATURES = result["n_features"]
     print(f"Best F1: {result['best_f1']:.4f}  |  Gap: {result['best_gap']:.4f}")
     print(f"Params: {cfg.LGB_PARAMS}")
     print(f"Var threshold: {cfg.VAR_THRESHOLD:.2e}")
+    print(f"N features: {cfg.N_TOP_FEATURES}")
 else:
     print("\nSkipping Optuna, using default params from config")
     print(f"Params: {cfg.LGB_PARAMS}")
+
+X = X_all[:, top_idx[: cfg.N_TOP_FEATURES]]
+X_test = X_test_all[:, top_idx[: cfg.N_TOP_FEATURES]]
+print(f"Selected top {cfg.N_TOP_FEATURES} -> train: {X.shape}, test: {X_test.shape}")
 
 print("\nEvaluating...")
 ev = evaluate(

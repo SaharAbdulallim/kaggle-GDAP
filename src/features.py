@@ -150,12 +150,7 @@ def extract(sample) -> np.ndarray:
             feats.extend(_lbp(img, 2, 12, 32))
             feats.extend(_gabor(img))
 
-        # Gradient features on NDVI (4)
-        gy, gx = np.gradient(ndvi)
-        grad = np.sqrt(gx**2 + gy**2)
-        feats.extend([grad.mean(), grad.std(), grad.max(), np.percentile(grad, 90)])
-
-        # Spatial uniformity (quadrants + 4x4 blocks) (8)
+        # Spatial uniformity (quadrants + 4x4 blocks)
         h, w = ndvi.shape
         quads = [
             ndvi[: h // 2, : w // 2],
@@ -183,7 +178,7 @@ def extract(sample) -> np.ndarray:
         feats.extend(_glcm(green_u8, distances=(1, 2), angles=(0, np.pi / 2)))
         feats.extend(_lbp(green_u8))
     else:
-        feats.extend([0] * 584)  # MS texture-only features
+        feats.extend([0] * 580)  # MS texture-only features
 
     # ======================== RGB ========================
     if rgb is not None:
@@ -237,24 +232,6 @@ def extract(sample) -> np.ndarray:
 
     for arr in (ndvi_hs, ndre_hs, red_nir, reip, reip_val):
         feats.extend(_array_stats(arr))
-
-    # Spectral heterogeneity (clean bands only)
-    cv_pb = band_stds[clean_slice] / (band_means[clean_slice] + EPS)
-    feats.extend(
-        [
-            cv_pb.mean(),
-            cv_pb.std(),
-            cv_pb[:30].mean(),  # vis: bands 10-40
-            cv_pb[30:55].mean(),  # red-edge: bands 40-65
-            cv_pb[65:].mean(),  # nir: bands 75-110
-        ]
-    )
-
-    # Red-edge derivative features
-    d1 = np.diff(band_means)
-    feats.extend(
-        [d1[45:75].max(), float(d1[45:75].argmax()), d1[45:75].mean(), d1[45:75].std()]
-    )
 
     # Region ratios (clean bands: 10-110)
     vis, re_r, nir_r = (
@@ -330,32 +307,7 @@ def extract(sample) -> np.ndarray:
         feats.extend(_glcm(img, distances=(1, 2), angles=(0, np.pi / 2)))
         feats.extend(_lbp(img, 1, 8))
 
-    # ---- HS spatial block heterogeneity on critical bands ----
-    h_hs, w_hs = hs.shape[0], hs.shape[1]
-    for s, e in [(43, 59), (80, 100)]:
-        region_map = hs[:, :, s:e].mean(axis=2)
-        bh, bw = max(1, h_hs // 4), max(1, w_hs // 4)
-        block_means = []
-        for bi in range(4):
-            for bj in range(4):
-                blk = region_map[bi * bh : (bi + 1) * bh, bj * bw : (bj + 1) * bw]
-                block_means.append(blk.mean())
-        bm = np.array(block_means)
-        feats.extend([bm.std(), bm.max() - bm.min(), np.std(bm) / (np.mean(bm) + EPS)])
-
-    # ---- Per-pixel red-edge curvature (2nd derivative) ----
-    d2 = np.diff(pixels[:, 43:65], n=2, axis=1)
-    d2_max = d2.max(axis=1)
-    d2_min = d2.min(axis=1)
-    d2_range = d2_max - d2_min
-    for arr in (d2_max, d2_min, d2_range):
-        feats.extend([arr.mean(), arr.std(), np.median(arr)])
-
-    # ---- HS critical band individual means (43-59, every 2nd) ----
-    for b in range(43, 60, 2):
-        feats.append(band_means[b])
-
-    # ---- NIR spatial std (diagnostic showed H_as_O has low NIR_std) ----
+    # ---- NIR spatial std ----
     nir_region = hs[:, :, 80:100].mean(axis=2)
     feats.extend([nir_region.std(), nir_region.mean() / (nir_region.std() + EPS)])
 

@@ -99,8 +99,16 @@ def run_optimization(
     X: np.ndarray,
     y: np.ndarray,
     cfg: CFG,
+    top_idx: np.ndarray = None,
 ) -> dict:
     def objective(trial):
+        # Feature count optimization
+        if top_idx is not None:
+            n_features = trial.suggest_int("n_features", 60, 200, step=20)
+            X_sel = X[:, top_idx[:n_features]]
+        else:
+            X_sel = X
+
         p = {
             "n_estimators": trial.suggest_int("n_estimators", 300, 1200),
             "max_depth": trial.suggest_int("max_depth", 2, 5),
@@ -123,7 +131,7 @@ def run_optimization(
         var_threshold = trial.suggest_float("var_threshold", 1e-10, 1e-4, log=True)
 
         selector = VarianceThreshold(threshold=var_threshold)
-        X_filtered = selector.fit_transform(X)
+        X_filtered = selector.fit_transform(X_sel)
         n = X_filtered.shape[1]
         skf = StratifiedKFold(
             n_splits=cfg.CV_FOLDS, shuffle=True, random_state=cfg.SEED
@@ -162,10 +170,12 @@ def run_optimization(
     best = dict(bt.params)
     var_thresh = best.pop("var_threshold")
     health_weight = best.pop("health_weight", 1.5)
+    n_features = best.pop("n_features", cfg.N_TOP_FEATURES)
     best["class_weight"] = {0: health_weight, 1: 1.0, 2: 1.0}
     return {
         "params": best,
         "var_threshold": var_thresh,
+        "n_features": n_features,
         "best_f1": study.best_value,
         "best_gap": bt.user_attrs.get("gap", 0.0),
     }
