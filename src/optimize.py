@@ -104,8 +104,13 @@ def run_optimization(
     y: np.ndarray,
     cfg: CFG,
 ) -> dict:
+    # Compute feature ranking once (on full train set Optuna sees)
+    # Reused across trials — not leakage since CV inside each trial is independent
+    cached_idx = get_feature_importance(X, y, cfg)
+
     def objective(trial):
         n_features = trial.suggest_int("n_features", 60, 200, step=20)
+        sel = cached_idx[:n_features]
 
         p = {
             "n_estimators": trial.suggest_int("n_estimators", 300, 1200),
@@ -132,9 +137,6 @@ def run_optimization(
         )
         val_scores, train_scores = [], []
         for tr, va in skf.split(X, y):
-            # Per-fold feature selection
-            fold_idx = get_feature_importance(X[tr], y[tr], CFG(SEED=cfg.SEED))
-            sel = fold_idx[:n_features]
             X_tr_sel, X_va_sel = X[tr][:, sel], X[va][:, sel]
 
             selector = VarianceThreshold(threshold=var_threshold)
@@ -158,7 +160,7 @@ def run_optimization(
         trial.set_user_attr("train_f1", mean_train)
         trial.set_user_attr("gap", mean_gap)
 
-        gap_penalty = max(0, mean_gap - 0.07) * 1.0
+        gap_penalty = max(0, mean_gap - 0.12) * 1.0
         return mean_val - gap_penalty
 
     study = optuna.create_study(
@@ -193,6 +195,9 @@ def train_final(
     sel = top_idx[: cfg.N_TOP_FEATURES]
     X_sel = X_train[:, sel]
 
+    vt = VarianceThreshold(threshold=cfg.VAR_THRESHOLD)
+    X_sel = vt.fit_transform(X_sel)
+
     sc = StandardScaler()
     Xtr = _to_df(sc.fit_transform(X_sel), X_sel.shape[1])
 
@@ -202,9 +207,9 @@ def train_final(
         clf.fit(Xtr, y_train)
         models.append(clf)
     print(
-        f"Trained {len(models)} models (seeds: {cfg.ENSEMBLE_SEEDS}), features: {len(sel)}"
+        f"Trained {len(models)} models (seeds: {cfg.ENSEMBLE_SEEDS}), features: {X_sel.shape[1]}"
     )
-    return models, sc, sel
+    return models, sc, sel, vt
 
 
 def predict(
@@ -214,9 +219,12 @@ def predict(
     test_names: list[str],
     cfg: CFG,
     sel: np.ndarray = None,
+    vt: VarianceThreshold = None,
 ):
     if sel is not None:
         X_test = X_test[:, sel]
+    if vt is not None:
+        X_test = vt.transform(X_test)
     Xte = _to_df(sc.transform(X_test), X_test.shape[1])
     probs = np.zeros((len(X_test), cfg.N_CLASSES))
     for clf in models:

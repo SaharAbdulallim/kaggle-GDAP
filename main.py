@@ -74,7 +74,7 @@ for i, name in enumerate(cfg.CLASSES):
     print(f"{name:>8}  {cm[i, 0]:>5}   {cm[i, 1]:>5}   {cm[i, 2]:>5}")
 
 print("\nTraining final models (feature selection on full train)...")
-models, sc, sel = train_final(
+models, sc, sel, vt = train_final(
     X_all,
     labels,
     cfg,
@@ -82,7 +82,7 @@ models, sc, sel = train_final(
 
 print("\nGenerating submission...")
 test_names = [s["name"] for s in test_samples]
-sub = predict(models, sc, X_test_all, test_names, cfg, sel=sel)
+sub = predict(models, sc, X_test_all, test_names, cfg, sel=sel, vt=vt)
 
 os.makedirs(cfg.OUT_DIR, exist_ok=True)
 sub_path = os.path.join(cfg.OUT_DIR, "submission.csv")

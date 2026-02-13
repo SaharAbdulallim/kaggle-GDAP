@@ -12,31 +12,31 @@ class CFG:
     CLASSES: tuple = ("Health", "Other", "Rust")
     N_CLASSES: int = 3
 
-    N_TOP_FEATURES: int = 60
+    N_TOP_FEATURES: int = 120
     OPTUNA_TRIALS: int = 40
     CV_FOLDS: int = 5
     SEED: int = 62
 
     LGB_PARAMS: dict = field(
         default_factory=lambda: {
-            "n_estimators": 617,
+            "n_estimators": 824,
             "max_depth": 5,
-            "learning_rate": 0.06052076336782357,
-            "subsample": 0.6698292354683619,
-            "colsample_bytree": 0.3245341724635894,
-            "min_child_samples": 32,
-            "reg_alpha": 3.7944415835594603,
-            "reg_lambda": 1.3637126525696954,
-            "num_leaves": 14,
+            "learning_rate": 0.01991217635443173,
+            "subsample": 0.7231765814243538,
+            "colsample_bytree": 0.41193352535022926,
+            "min_child_samples": 40,
+            "reg_alpha": 2.9366666590829906,
+            "reg_lambda": 6.667228454493273,
+            "num_leaves": 9,
             "boosting_type": "gbdt",
-            "min_split_gain": 0.2798089579584129,
-            "path_smooth": 0.25651772044294585,
+            "min_split_gain": 0.3475020292190679,
+            "path_smooth": 0.006800104412862856,
             "extra_trees": True,
-            "class_weight": {0: 1.4948697962589994, 1: 1.0, 2: 1.0},
+            "class_weight": {0: 1.302869968745372, 1: 1.0, 2: 1.0},
         }
     )
 
-    VAR_THRESHOLD: float = 5.49e-10
+    VAR_THRESHOLD: float = 1.37e-09
     ENSEMBLE_SEEDS: tuple = (42, 123, 456)
 
     @property
