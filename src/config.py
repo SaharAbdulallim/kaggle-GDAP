@@ -13,7 +13,9 @@ class CFG:
     N_CLASSES: int = 3
 
     N_TOP_FEATURES: int = 60
-    NOISE_CONF_THRESHOLD: float = 0.3
+    NOISE_CONF_THRESHOLD: float = (
+        0.1  # Conservative: only remove very confident mislabels
+    )
     OPTUNA_TRIALS: int = 40
     CV_FOLDS: int = 5
     SEED: int = 62
