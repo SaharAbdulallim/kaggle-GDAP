@@ -72,24 +72,6 @@ def _lbp(img_u8, radius=1, n_points=8, n_bins=32):
     return (hist / (hist.sum() + EPS)).tolist()
 
 
-# ------------------------------------------------------------------ Gabor
-def _gabor(
-    img_u8, frequencies=(0.1, 0.2, 0.4), thetas=(0, np.pi / 4, np.pi / 2, 3 * np.pi / 4)
-):
-    feats = []
-    img_f = img_u8.astype(np.float32) / 255.0
-    for freq in frequencies:
-        for theta in thetas:
-            sigma = 1.0 / (freq * np.pi)
-            ks = max(3, min(int(sigma * 6) | 1, 31))
-            kernel = cv2.getGaborKernel(
-                (ks, ks), sigma, theta, 1.0 / freq, 0.5, 0, ktype=cv2.CV_32F
-            )
-            filt = cv2.filter2D(img_f, cv2.CV_32F, kernel)
-            feats.extend([filt.mean(), filt.std(), np.abs(filt).mean()])
-    return feats
-
-
 # ------------------------------------------------------------------ Stats helpers
 def _band_stats(band):
     std_val = band.std()
@@ -126,6 +108,13 @@ def _array_stats(arr):
     ]
 
 
+def _pixel_entropy(vals, n_bins=32):
+    h, _ = np.histogram(vals, bins=n_bins)
+    p = h / (h.sum() + 1e-8)
+    p = p[p > 0]
+    return -np.sum(p * np.log2(p))
+
+
 # ================================================================== MAIN
 def extract(sample) -> np.ndarray:
     hs, ms, rgb = sample["hs"], sample["ms"], sample["rgb"]
@@ -139,17 +128,15 @@ def extract(sample) -> np.ndarray:
         # MS has 2x resolution (64x64 vs HS 32x32) - use for texture only
         ndvi = (nir - red) / (nir + red + EPS)
 
-        # Texture: GLCM + LBP + Gabor on NDVI, NIR, RedEdge (high-res 64x64)
+        # Texture: GLCM + LBP on NDVI, NIR, RedEdge (64x64)
         ndvi_u8, nir_u8, re_u8 = (
             _normalize_u8(ndvi),
             _normalize_u8(nir),
             _normalize_u8(re),
         )
         for img in (ndvi_u8, nir_u8, re_u8):
-            feats.extend(_glcm(img))
+            feats.extend(_glcm(img, distances=(1,), angles=(0, np.pi / 2)))
             feats.extend(_lbp(img, 1, 8))
-            feats.extend(_lbp(img, 2, 12, 32))
-            feats.extend(_gabor(img))
 
         # Spatial uniformity (quadrants + 4x4 blocks)
         h, w = ndvi.shape
@@ -174,11 +161,6 @@ def extract(sample) -> np.ndarray:
                 bst.append(blk.std())
         feats.extend([np.std(bm), np.max(bm) - np.min(bm), np.mean(bst), np.std(bst)])
 
-        # Green channel texture
-        green_u8 = _normalize_u8(green)
-        feats.extend(_glcm(green_u8, distances=(1, 2), angles=(0, np.pi / 2)))
-        feats.extend(_lbp(green_u8))
-
         # MS spectral indices at full 64x64 resolution
         ndre = (nir - re) / (nir + re + EPS)
         gndvi = (nir - green) / (nir + green + EPS)
@@ -192,7 +174,7 @@ def extract(sample) -> np.ndarray:
         for band in (blue_ms, green, red, re, nir):
             feats.extend(_band_stats(band))
     else:
-        feats.extend([0] * 707)
+        feats.extend([0] * 267)
 
     # ======================== RGB ========================
     if rgb is not None:
@@ -215,23 +197,137 @@ def extract(sample) -> np.ndarray:
                 ]
             )
         gray = cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_BGR2GRAY)
-        feats.extend(_glcm(gray, distances=(1, 2), angles=(0, np.pi / 2)))
+        feats.extend(_glcm(gray, distances=(1,), angles=(0, np.pi / 2)))
         feats.extend(_lbp(gray))
-        feats.extend(_gabor(gray))
         gy, gx = np.gradient(rgb.mean(axis=2))
         grad = np.sqrt(gx**2 + gy**2)
         feats.extend([grad.mean(), grad.std(), grad.max()])
     else:
-        feats.extend([0] * 120)
+        feats.extend([0] * 77)
 
     # ======================== HS ========================
     pixels = hs.reshape(-1, 125)
     band_means = pixels.mean(axis=0)
     band_stds = pixels.std(axis=0)
-    # Use clean bands only (10-110), avoiding noisy sensor edges
     clean_slice = slice(10, 111)
-    feats.extend(band_means[clean_slice].tolist())
-    feats.extend(band_stds[clean_slice].tolist())
+    clean_means = band_means[clean_slice]
+    clean_pixels = pixels[:, clean_slice]
+
+    # Spectral shape descriptors (replacing broken per-sample PCA)
+    # Area under curve in key regions — captures overall reflectance magnitude
+    feats.extend(
+        [
+            clean_means.sum(),  # total area
+            clean_means[:30].sum(),  # VIS area (bands 10-39)
+            clean_means[30:60].sum(),  # red-edge area (bands 40-69)
+            clean_means[60:].sum(),  # NIR area (bands 70-110)
+        ]
+    )
+    # Spectral shape ratios (scale-invariant)
+    total = clean_means.sum() + EPS
+    feats.extend(
+        [
+            clean_means[:30].sum() / total,  # VIS fraction
+            clean_means[30:60].sum() / total,  # RE fraction
+            clean_means[60:].sum() / total,  # NIR fraction
+        ]
+    )
+    # Median spectrum — more robust than mean when pixels are mixed
+    clean_medians = np.median(clean_pixels, axis=0)
+    med_total = clean_medians.sum() + EPS
+    feats.extend(
+        [
+            clean_medians[:30].sum() / med_total,
+            clean_medians[30:60].sum() / med_total,
+            clean_medians[60:].sum() / med_total,
+        ]
+    )
+    # Mean-median divergence per region (skewed distributions shift these apart)
+    for s, e in [(0, 30), (30, 60), (60, 101)]:
+        feats.append(clean_means[s:e].mean() - clean_medians[s:e].mean())
+
+    # Continuum removal at absorption features (normalizes for brightness)
+    hull_red = np.interp(range(20, 50), [20, 50], [clean_means[10], clean_means[40]])
+    cr_red = clean_means[10:40] / (hull_red + EPS)
+    feats.extend([cr_red.min(), cr_red.mean(), cr_red.std(), np.argmin(cr_red)])
+
+    # Spectral derivatives (first and second order)
+    d1 = np.diff(clean_means)
+    d2 = np.diff(d1)
+    feats.extend(_array_stats(d1))
+    feats.extend(_array_stats(d2))
+    # Derivative values at discriminative bands (from chart: bands 55-70 separate classes)
+    d1_diag = [45, 50, 55, 58, 60, 62, 65, 70]  # red-edge region indices into d1
+    for b in d1_diag:
+        if b < len(d1):
+            feats.append(d1[b])
+    feats.extend([d1.max(), d1.argmax(), d2.max(), d2.argmax()])
+    # Per-pixel derivative consistency
+    px_d1 = np.diff(clean_pixels, axis=1)
+    px_d1_std = px_d1.std(axis=0)
+    feats.extend([px_d1_std.mean(), px_d1_std.std(), px_d1_std.max()])
+
+    # ---- Health vs Rust targeted features ----
+    # Spatial heterogeneity: rust lesions create distinct patches vs uniform healthy tissue
+    h, w = hs.shape[:2]
+    quad_spectra = [
+        hs[: h // 2, : w // 2].reshape(-1, 125)[:, clean_slice].mean(0),
+        hs[: h // 2, w // 2 :].reshape(-1, 125)[:, clean_slice].mean(0),
+        hs[h // 2 :, : w // 2].reshape(-1, 125)[:, clean_slice].mean(0),
+        hs[h // 2 :, w // 2 :].reshape(-1, 125)[:, clean_slice].mean(0),
+    ]
+    # Inter-quadrant spectral variation (rust patches vs uniform health)
+    quad_arr = np.array(quad_spectra)
+    quad_cv = quad_arr.std(axis=0) / (quad_arr.mean(axis=0) + EPS)
+    feats.extend([quad_cv.mean(), quad_cv.std(), quad_cv.max()])
+    # Quadrant NDVI spread — rust lesions cause uneven NDVI across patch
+    quad_ndvi = []
+    for qs in quad_spectra:
+        qr, qn = qs[20:35].mean(), qs[70:90].mean()
+        quad_ndvi.append((qn - qr) / (qn + qr + EPS))
+    feats.extend([np.std(quad_ndvi), np.max(quad_ndvi) - np.min(quad_ndvi)])
+
+    # Pixel-level bimodality: rust creates a bimodal distribution of spectra
+    nir_px = pixels[:, 80:100].mean(1)
+    nir_med = np.median(nir_px)
+    above = nir_px[nir_px >= nir_med]
+    below = nir_px[nir_px < nir_med]
+    # Ratio of upper vs lower half means — bimodal rust > unimodal health
+    feats.append(above.mean() / (below.mean() + EPS) if len(below) > 0 else 1.0)
+    # Kurtosis of NIR pixel distribution — platykurtic (bimodal) vs leptokurtic
+    feats.append(kurtosis(nir_px) if nir_px.std() > EPS else 0.0)
+
+    # Spectral angle between brightest and darkest pixels (mixing indicator)
+    px_brightness = pixels[:, 10:110].mean(1)
+    bright_mask = px_brightness >= np.percentile(px_brightness, 75)
+    dark_mask = px_brightness <= np.percentile(px_brightness, 25)
+    bright_spec = pixels[bright_mask][:, 10:110].mean(0)
+    dark_spec = pixels[dark_mask][:, 10:110].mean(0)
+    cos_sim = np.dot(bright_spec, dark_spec) / (
+        np.linalg.norm(bright_spec) * np.linalg.norm(dark_spec) + EPS
+    )
+    feats.append(cos_sim)  # health ~1.0 (uniform shape), rust < 1.0 (mixed)
+
+    # ---- Per-band pixel distribution shape (from analysis: entropy d=0.53, kurtosis d=0.43) ----
+    diag_bands = [
+        44,
+        54,
+        60,
+        70,
+        91,
+        99,
+    ]  # red, red-edge peak, RE onset, NIR start, NIR late, NIR edge
+    for b in diag_bands:
+        band_px = pixels[:, b]
+        std_b = band_px.std()
+        feats.extend(
+            [
+                _pixel_entropy(band_px),
+                skew(band_px) if std_b > EPS else 0.0,
+                kurtosis(band_px) if std_b > EPS else 0.0,
+                np.percentile(band_px, 75) - np.percentile(band_px, 25),
+            ]
+        )
 
     # HS spectral indices at pixel level
     red_hs = pixels[:, 30:45].mean(1)
@@ -318,7 +414,7 @@ def extract(sample) -> np.ndarray:
     re_spatial = _normalize_u8(hs[:, :, 43:59].mean(axis=2))
     nir_spatial = _normalize_u8(hs[:, :, 80:95].mean(axis=2))
     for img in (re_spatial, nir_spatial):
-        feats.extend(_glcm(img, distances=(1, 2), angles=(0, np.pi / 2)))
+        feats.extend(_glcm(img, distances=(1,), angles=(0, np.pi / 2)))
         feats.extend(_lbp(img, 1, 8))
 
     # ---- NIR spatial std ----

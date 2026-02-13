@@ -3,7 +3,7 @@ import numpy as np
 import optuna
 import pandas as pd
 from lightgbm import LGBMClassifier
-from sklearn.feature_selection import VarianceThreshold
+from sklearn.feature_selection import VarianceThreshold, mutual_info_classif
 from sklearn.metrics import f1_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
@@ -19,20 +19,43 @@ def _to_df(arr, n_cols):
 optuna.logging.set_verbosity(optuna.logging.INFO)
 
 
-def get_feature_importance(X: np.ndarray, y: np.ndarray, cfg: CFG) -> np.ndarray:
-    sc = StandardScaler()
-    X_s = _to_df(sc.fit_transform(X), X.shape[1])
-    clf = LGBMClassifier(
-        n_estimators=500,
-        max_depth=6,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        verbose=-1,
-        random_state=cfg.SEED,
-    )
-    clf.fit(X_s, y)
-    return np.argsort(-clf.feature_importances_)
+def mrmr_select(
+    X: np.ndarray, y: np.ndarray, n_select: int, seed: int = 42
+) -> np.ndarray:
+    """mRMR feature selection (Peng, Long & Ding, IEEE TPAMI 2005).
+
+    Greedy forward selection maximizing relevance (MI with target)
+    minus mean redundancy (MI with already-selected features).
+    Deterministic, fast, handles correlated spectral bands natively.
+    Uses Pearson |r| as redundancy proxy (Ding & Peng 2005).
+    """
+    n_feats = X.shape[1]
+    n_select = min(n_select, n_feats)
+
+    relevance = mutual_info_classif(X, y, random_state=seed, n_neighbors=5)
+
+    # Pre-compute full |correlation| matrix — O(n^2) but vectorized and fast
+    abs_corr = np.abs(np.corrcoef(X, rowvar=False))
+    np.nan_to_num(abs_corr, copy=False, nan=0.0)
+
+    selected = []
+    remaining = np.ones(n_feats, dtype=bool)
+    # Running sum of correlations with selected features per candidate
+    red_sum = np.zeros(n_feats, dtype=np.float64)
+
+    for k in range(n_select):
+        if k == 0:
+            scores = relevance.copy()
+        else:
+            scores = relevance - red_sum / k
+        scores[~remaining] = -np.inf
+        best = int(np.argmax(scores))
+        selected.append(best)
+        remaining[best] = False
+        # Update running redundancy sums for all remaining candidates
+        red_sum += abs_corr[best]
+
+    return np.array(selected, dtype=np.int64)
 
 
 def _fit(clf, Xtr, ytr, Xval=None, yval=None, early_stop=50):
@@ -51,6 +74,18 @@ def _fit(clf, Xtr, ytr, Xval=None, yval=None, early_stop=50):
     return clf
 
 
+def _build_pipeline(X, y, n_top, var_threshold, seed):
+    """Shared mRMR -> VT -> scale -> fit pipeline used by evaluate and train_final."""
+    sel = mrmr_select(X, y, n_select=n_top, seed=seed)
+    X_sel = X[:, sel]
+    vt = VarianceThreshold(threshold=var_threshold)
+    X_sel = vt.fit_transform(X_sel)
+    n = X_sel.shape[1]
+    sc = StandardScaler()
+    X_scaled = _to_df(sc.fit_transform(X_sel), n)
+    return sel, vt, sc, X_scaled, n
+
+
 def evaluate(
     X: np.ndarray,
     y: np.ndarray,
@@ -58,28 +93,18 @@ def evaluate(
     n_folds: int = 5,
     seed: int = 42,
     n_top: int = 60,
+    var_threshold: float = 0.0,
 ) -> dict:
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     preds = np.zeros(len(y), dtype=int)
     train_scores, val_scores, best_iters = [], [], []
     for fold_i, (tr, va) in enumerate(skf.split(X, y)):
-        # Per-fold feature selection eliminates leakage
-        fold_idx = get_feature_importance(X[tr], y[tr], CFG(SEED=seed))
-        sel = fold_idx[:n_top]
-        X_fold, y_fold = X[tr][:, sel], y[tr]
-        n = X_fold.shape[1]
-        sc = StandardScaler()
-        Xtr = _to_df(sc.fit_transform(X_fold), n)
-        Xva = _to_df(sc.transform(X[va][:, sel]), n)
+        sel, vt, sc, Xtr, n = _build_pipeline(X[tr], y[tr], n_top, var_threshold, seed)
+        Xva = _to_df(sc.transform(vt.transform(X[va][:, sel])), n)
         clf = LGBMClassifier(**params, verbose=-1, random_state=seed)
+        y_fold = y[tr]
         _fit(clf, Xtr, y_fold, Xva, y[va], early_stop=50)
-        actual_trees = (
-            clf.n_estimators_
-            if hasattr(clf, "n_estimators_")
-            else clf.best_iteration_
-            if hasattr(clf, "best_iteration_")
-            else params.get("n_estimators")
-        )
+        actual_trees = getattr(clf, "best_iteration_", params.get("n_estimators", 0))
         best_iters.append(actual_trees)
         tr_f1 = f1_score(y_fold, clf.predict(Xtr), average="macro")
         preds[va] = clf.predict(Xva)
@@ -104,30 +129,25 @@ def run_optimization(
     y: np.ndarray,
     cfg: CFG,
 ) -> dict:
-    # Compute feature ranking once (on full train set Optuna sees)
-    # Reused across trials — not leakage since CV inside each trial is independent
-    cached_idx = get_feature_importance(X, y, cfg)
-
     def objective(trial):
-        n_features = trial.suggest_int("n_features", 60, 200, step=20)
-        sel = cached_idx[:n_features]
+        n_features = trial.suggest_int("n_features", 40, 80, step=10)
 
         p = {
             "n_estimators": trial.suggest_int("n_estimators", 300, 1200),
-            "max_depth": trial.suggest_int("max_depth", 2, 5),
+            "max_depth": trial.suggest_int("max_depth", 3, 6),
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
             "subsample": trial.suggest_float("subsample", 0.5, 0.8),
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.3, 0.6),
             "min_child_samples": trial.suggest_int("min_child_samples", 30, 100),
             "reg_alpha": trial.suggest_float("reg_alpha", 1.0, 50.0, log=True),
             "reg_lambda": trial.suggest_float("reg_lambda", 1.0, 50.0, log=True),
-            "num_leaves": trial.suggest_int("num_leaves", 4, 15),
+            "num_leaves": trial.suggest_int("num_leaves", 8, 20),
             "boosting_type": "gbdt",
-            "min_split_gain": trial.suggest_float("min_split_gain", 0.01, 0.5),
-            "path_smooth": trial.suggest_float("path_smooth", 0.0, 5.0),
+            "min_split_gain": trial.suggest_float("min_split_gain", 0.05, 0.5),
+            "path_smooth": trial.suggest_float("path_smooth", 0.5, 10.0),
             "extra_trees": trial.suggest_categorical("extra_trees", [True, False]),
         }
-        health_weight = trial.suggest_float("health_weight", 1.0, 1.5)
+        health_weight = trial.suggest_float("health_weight", 1.0, 2.5)
         p["class_weight"] = {0: health_weight, 1: 1.0, 2: 1.0}
 
         var_threshold = trial.suggest_float("var_threshold", 1e-10, 1e-4, log=True)
@@ -137,7 +157,8 @@ def run_optimization(
         )
         val_scores, train_scores = [], []
         for tr, va in skf.split(X, y):
-            X_tr_sel, X_va_sel = X[tr][:, sel], X[va][:, sel]
+            fold_idx = mrmr_select(X[tr], y[tr], n_select=n_features, seed=cfg.SEED)
+            X_tr_sel, X_va_sel = X[tr][:, fold_idx], X[va][:, fold_idx]
 
             selector = VarianceThreshold(threshold=var_threshold)
             X_fold_filtered = selector.fit_transform(X_tr_sel)
@@ -160,7 +181,8 @@ def run_optimization(
         trial.set_user_attr("train_f1", mean_train)
         trial.set_user_attr("gap", mean_gap)
 
-        gap_penalty = max(0, mean_gap - 0.12) * 1.0
+        # Progressive penalty: starts at gap=0.10, scales linearly
+        gap_penalty = max(0, mean_gap - 0.10) * 1.0
         return mean_val - gap_penalty
 
     study = optuna.create_study(
@@ -190,24 +212,27 @@ def train_final(
     X_train: np.ndarray,
     y_train: np.ndarray,
     cfg: CFG,
+    best_iters: list[int] = None,
 ):
-    top_idx = get_feature_importance(X_train, y_train, cfg)
-    sel = top_idx[: cfg.N_TOP_FEATURES]
-    X_sel = X_train[:, sel]
+    sel, vt, sc, Xtr, n = _build_pipeline(
+        X_train, y_train, cfg.N_TOP_FEATURES, cfg.VAR_THRESHOLD, cfg.SEED
+    )
 
-    vt = VarianceThreshold(threshold=cfg.VAR_THRESHOLD)
-    X_sel = vt.fit_transform(X_sel)
-
-    sc = StandardScaler()
-    Xtr = _to_df(sc.fit_transform(X_sel), X_sel.shape[1])
+    # Use median CV iteration count to avoid training beyond what CV validated
+    if best_iters:
+        cap = int(np.median(best_iters))
+        final_params = {**cfg.LGB_PARAMS, "n_estimators": cap}
+    else:
+        final_params = cfg.LGB_PARAMS
 
     models = []
     for s in cfg.ENSEMBLE_SEEDS:
-        clf = LGBMClassifier(**cfg.LGB_PARAMS, verbose=-1, random_state=s)
+        clf = LGBMClassifier(**final_params, verbose=-1, random_state=s)
         clf.fit(Xtr, y_train)
         models.append(clf)
     print(
-        f"Trained {len(models)} models (seeds: {cfg.ENSEMBLE_SEEDS}), features: {X_sel.shape[1]}"
+        f"Trained {len(models)} models (seeds: {cfg.ENSEMBLE_SEEDS}), "
+        f"features: {n}, trees: {final_params.get('n_estimators')}"
     )
     return models, sc, sel, vt
 

@@ -18,13 +18,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--run-optuna", action="store_true", help="Run Optuna optimization")
 parser.add_argument("--trials", type=int, default=40, help="Number of Optuna trials")
 parser.add_argument("--folds", type=int, default=5, help="Number of CV folds")
-parser.add_argument("--features", type=int, default=120, help="Number of top features")
+parser.add_argument("--features", type=int, default=None, help="Number of top features")
 args = parser.parse_args()
 
 cfg = CFG()
 cfg.OPTUNA_TRIALS = args.trials
 cfg.CV_FOLDS = args.folds
-cfg.N_TOP_FEATURES = args.features
+if args.features is not None:
+    cfg.N_TOP_FEATURES = args.features
 
 print("Loading data...")
 samples, labels = load_train(cfg)
@@ -61,6 +62,7 @@ ev = evaluate(
     n_folds=cfg.CV_FOLDS,
     seed=cfg.SEED,
     n_top=cfg.N_TOP_FEATURES,
+    var_threshold=cfg.VAR_THRESHOLD,
 )
 print(
     f"\nTrain F1: {ev['train_f1']:.4f}  |  Val F1: {ev['val_f1']:.4f}  |  Gap: {ev['train_f1'] - ev['val_f1']:.4f}"
@@ -78,6 +80,7 @@ models, sc, sel, vt = train_final(
     X_all,
     labels,
     cfg,
+    best_iters=ev["best_iters"],
 )
 
 print("\nGenerating submission...")
