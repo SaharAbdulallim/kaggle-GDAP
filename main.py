@@ -10,7 +10,6 @@ from src.features import extract_batch
 from src.optimize import (
     detect_noisy_samples,
     evaluate,
-    get_feature_importance,
     predict,
     run_optimization,
     train_final,
@@ -42,22 +41,11 @@ X_test_all = extract_batch(test_samples)
 print(f"Train features: {X_all.shape}")
 print(f"Test features:  {X_test_all.shape}")
 
-# Note: Feature selection done on full data for efficiency
-# Leakage is acceptable here as we're just ranking features, not learning decision boundaries
-print("\nFeature selection...")
-top_idx = get_feature_importance(X_all, labels, cfg)
-
-X = X_all[:, top_idx[: cfg.N_TOP_FEATURES]]
-X_test = X_test_all[:, top_idx[: cfg.N_TOP_FEATURES]]
-print(f"Selected top {cfg.N_TOP_FEATURES} -> train: {X.shape}, test: {X_test.shape}")
-
 clean_mask = np.ones(len(labels), dtype=bool)
 
-# Step 1: Prune noisy samples FIRST (before Optuna)
 if cfg.NOISE_CONF_THRESHOLD > 0 or args.prune_noise:
     threshold = cfg.NOISE_CONF_THRESHOLD if cfg.NOISE_CONF_THRESHOLD > 0 else 0.3
     print(f"\nDetecting noisy samples (conf < {threshold})...")
-    # Use default params for noise detection
     default_params = {
         "n_estimators": 500,
         "max_depth": 4,
@@ -65,7 +53,7 @@ if cfg.NOISE_CONF_THRESHOLD > 0 or args.prune_noise:
         "random_state": cfg.SEED,
     }
     noise_result = detect_noisy_samples(
-        X,
+        X_all,
         labels,
         conf_threshold=threshold,
         n_folds=cfg.CV_FOLDS,
@@ -76,18 +64,12 @@ if cfg.NOISE_CONF_THRESHOLD > 0 or args.prune_noise:
     n_noisy = noise_result["noisy_mask"].sum()
     print(f"Pruning {n_noisy} noisy samples -> {clean_mask.sum()} clean")
 
-X_clean = X[clean_mask]
+X_clean = X_all[clean_mask]
 y_clean = labels[clean_mask]
 
-# Step 2: Run Optuna HPO on CLEAN data only
 if args.run_optuna:
-    print("\nOptuna HPO on clean data...")
-    result = run_optimization(
-        X_all[clean_mask],
-        y_clean,
-        cfg,
-        top_idx=top_idx,
-    )
+    print("\nOptuna HPO on clean data (per-fold feature selection)...")
+    result = run_optimization(X_clean, y_clean, cfg)
     cfg.LGB_PARAMS = result["params"]
     cfg.VAR_THRESHOLD = result["var_threshold"]
     cfg.N_TOP_FEATURES = result["n_features"]
@@ -95,23 +77,18 @@ if args.run_optuna:
     print(f"Params: {cfg.LGB_PARAMS}")
     print(f"Var threshold: {cfg.VAR_THRESHOLD:.2e}")
     print(f"N features: {cfg.N_TOP_FEATURES}")
-    # Reselect features with optimized count
-    X_clean = X_all[clean_mask][:, top_idx[: cfg.N_TOP_FEATURES]]
-    X_test = X_test_all[:, top_idx[: cfg.N_TOP_FEATURES]]
-    print(
-        f"Reselected top {cfg.N_TOP_FEATURES} -> train: {X_clean.shape}, test: {X_test.shape}"
-    )
 else:
     print("\nSkipping Optuna, using default params from config")
     print(f"Params: {cfg.LGB_PARAMS}")
 
-print("\nEvaluating...")
+print("\nEvaluating (per-fold feature selection)...")
 ev = evaluate(
     X_clean,
     y_clean,
     cfg.LGB_PARAMS,
     n_folds=cfg.CV_FOLDS,
     seed=cfg.SEED,
+    n_top=cfg.N_TOP_FEATURES,
 )
 print(
     f"\nTrain F1: {ev['train_f1']:.4f}  |  Val F1: {ev['val_f1']:.4f}  |  Gap: {ev['train_f1'] - ev['val_f1']:.4f}"
@@ -124,8 +101,8 @@ print("          Pred_H  Pred_O  Pred_R")
 for i, name in enumerate(cfg.CLASSES):
     print(f"{name:>8}  {cm[i, 0]:>5}   {cm[i, 1]:>5}   {cm[i, 2]:>5}")
 
-print("\nTraining final models...")
-models, sc = train_final(
+print("\nTraining final models (feature selection on full train)...")
+models, sc, sel = train_final(
     X_clean,
     y_clean,
     cfg,
@@ -133,7 +110,7 @@ models, sc = train_final(
 
 print("\nGenerating submission...")
 test_names = [s["name"] for s in test_samples]
-sub = predict(models, sc, X_test, test_names, cfg)
+sub = predict(models, sc, X_test_all, test_names, cfg, sel=sel)
 
 os.makedirs(cfg.OUT_DIR, exist_ok=True)
 sub_path = os.path.join(cfg.OUT_DIR, "submission.csv")

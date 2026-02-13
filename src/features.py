@@ -131,8 +131,9 @@ def extract(sample) -> np.ndarray:
     hs, ms, rgb = sample["hs"], sample["ms"], sample["rgb"]
     feats = []
 
-    # ======================== MS (texture only - spectral redundant with HS) ========================
+    # ======================== MS (texture + spectral indices at 2x resolution) ========================
     if ms is not None:
+        blue_ms = ms[:, :, 0]
         nir, red, re, green = ms[:, :, 4], ms[:, :, 2], ms[:, :, 3], ms[:, :, 1]
 
         # MS has 2x resolution (64x64 vs HS 32x32) - use for texture only
@@ -177,8 +178,21 @@ def extract(sample) -> np.ndarray:
         green_u8 = _normalize_u8(green)
         feats.extend(_glcm(green_u8, distances=(1, 2), angles=(0, np.pi / 2)))
         feats.extend(_lbp(green_u8))
+
+        # MS spectral indices at full 64x64 resolution
+        ndre = (nir - re) / (nir + re + EPS)
+        gndvi = (nir - green) / (nir + green + EPS)
+        ci_re = nir / (re + EPS) - 1.0
+        ci_green = nir / (green + EPS) - 1.0
+        savi = 1.5 * (nir - red) / (nir + red + 0.5 + EPS)
+        for idx in (ndvi, ndre, gndvi, ci_re, ci_green, savi):
+            feats.extend(_index_stats(idx))
+
+        # Per-band stats at MS resolution
+        for band in (blue_ms, green, red, re, nir):
+            feats.extend(_band_stats(band))
     else:
-        feats.extend([0] * 580)  # MS texture-only features
+        feats.extend([0] * 707)
 
     # ======================== RGB ========================
     if rgb is not None:

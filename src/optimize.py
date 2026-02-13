@@ -93,16 +93,20 @@ def evaluate(
     params: dict,
     n_folds: int = 5,
     seed: int = 42,
+    n_top: int = 60,
 ) -> dict:
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     preds = np.zeros(len(y), dtype=int)
     train_scores, val_scores, best_iters = [], [], []
-    n = X.shape[1]
     for fold_i, (tr, va) in enumerate(skf.split(X, y)):
-        X_fold, y_fold = X[tr], y[tr]
+        # Per-fold feature selection eliminates leakage
+        fold_idx = get_feature_importance(X[tr], y[tr], CFG(SEED=seed))
+        sel = fold_idx[:n_top]
+        X_fold, y_fold = X[tr][:, sel], y[tr]
+        n = X_fold.shape[1]
         sc = StandardScaler()
         Xtr = _to_df(sc.fit_transform(X_fold), n)
-        Xva = _to_df(sc.transform(X[va]), n)
+        Xva = _to_df(sc.transform(X[va][:, sel]), n)
         clf = LGBMClassifier(**params, verbose=-1, random_state=seed)
         _fit(clf, Xtr, y_fold, Xva, y[va], early_stop=50)
         actual_trees = (
@@ -135,15 +139,9 @@ def run_optimization(
     X: np.ndarray,
     y: np.ndarray,
     cfg: CFG,
-    top_idx: np.ndarray = None,
 ) -> dict:
     def objective(trial):
-        # Feature count optimization
-        if top_idx is not None:
-            n_features = trial.suggest_int("n_features", 60, 200, step=20)
-            X_sel = X[:, top_idx[:n_features]]
-        else:
-            X_sel = X
+        n_features = trial.suggest_int("n_features", 60, 200, step=20)
 
         p = {
             "n_estimators": trial.suggest_int("n_estimators", 300, 1200),
@@ -169,11 +167,15 @@ def run_optimization(
             n_splits=cfg.CV_FOLDS, shuffle=True, random_state=cfg.SEED
         )
         val_scores, train_scores = [], []
-        for tr, va in skf.split(X_sel, y):
-            # Fit variance threshold on training fold only
+        for tr, va in skf.split(X, y):
+            # Per-fold feature selection
+            fold_idx = get_feature_importance(X[tr], y[tr], CFG(SEED=cfg.SEED))
+            sel = fold_idx[:n_features]
+            X_tr_sel, X_va_sel = X[tr][:, sel], X[va][:, sel]
+
             selector = VarianceThreshold(threshold=var_threshold)
-            X_fold_filtered = selector.fit_transform(X_sel[tr])
-            X_val_filtered = selector.transform(X_sel[va])
+            X_fold_filtered = selector.fit_transform(X_tr_sel)
+            X_val_filtered = selector.transform(X_va_sel)
             y_fold = y[tr]
 
             n = X_fold_filtered.shape[1]
@@ -192,7 +194,6 @@ def run_optimization(
         trial.set_user_attr("train_f1", mean_train)
         trial.set_user_attr("gap", mean_gap)
 
-        # Gap penalty: target gap < 0.12
         gap_penalty = max(0, mean_gap - 0.07) * 1.0
         return mean_val - gap_penalty
 
@@ -224,19 +225,34 @@ def train_final(
     y_train: np.ndarray,
     cfg: CFG,
 ):
+    top_idx = get_feature_importance(X_train, y_train, cfg)
+    sel = top_idx[: cfg.N_TOP_FEATURES]
+    X_sel = X_train[:, sel]
+
     sc = StandardScaler()
-    Xtr = _to_df(sc.fit_transform(X_train), X_train.shape[1])
+    Xtr = _to_df(sc.fit_transform(X_sel), X_sel.shape[1])
 
     models = []
     for s in cfg.ENSEMBLE_SEEDS:
         clf = LGBMClassifier(**cfg.LGB_PARAMS, verbose=-1, random_state=s)
         clf.fit(Xtr, y_train)
         models.append(clf)
-    print(f"Trained {len(models)} models (seeds: {cfg.ENSEMBLE_SEEDS})")
-    return models, sc
+    print(
+        f"Trained {len(models)} models (seeds: {cfg.ENSEMBLE_SEEDS}), features: {len(sel)}"
+    )
+    return models, sc, sel
 
 
-def predict(models, sc, X_test: np.ndarray, test_names: list[str], cfg: CFG):
+def predict(
+    models,
+    sc,
+    X_test: np.ndarray,
+    test_names: list[str],
+    cfg: CFG,
+    sel: np.ndarray = None,
+):
+    if sel is not None:
+        X_test = X_test[:, sel]
     Xte = _to_df(sc.transform(X_test), X_test.shape[1])
     probs = np.zeros((len(X_test), cfg.N_CLASSES))
     for clf in models:
