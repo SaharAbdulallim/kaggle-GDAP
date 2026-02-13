@@ -16,7 +16,9 @@ def load_sample(fname: str, hs_dir: str, ms_dir: str, rgb_dir: str):
         hs = hs[:, :, :125]
 
     ms_path = os.path.join(ms_dir, fname + ".tif")
-    ms = tifffile.imread(ms_path).astype(np.float32) if os.path.exists(ms_path) else None
+    ms = (
+        tifffile.imread(ms_path).astype(np.float32) if os.path.exists(ms_path) else None
+    )
 
     rgb_path = os.path.join(rgb_dir, fname + ".png")
     rgb = cv2.imread(rgb_path).astype(np.float32) if os.path.exists(rgb_path) else None
@@ -30,20 +32,26 @@ def load_train(cfg: CFG):
     rgb_dir = cfg.train_path("RGB")
     cmap = cfg.class_map
     samples, labels = [], []
+    total, blank = 0, 0
 
     for f in sorted(glob.glob(os.path.join(hs_dir, "*.tif*"))):
         fname = os.path.splitext(os.path.basename(f))[0]
         cls = fname.split("_hyper_")[0]
-        if cls not in cmap or fname in cfg.BLANK_SAMPLES:
+        if cls not in cmap:
             continue
         s = load_sample(fname, hs_dir, ms_dir, rgb_dir)
         if s is None:
+            continue
+        total += 1
+        if s["hs"].mean() < 1.0:
+            blank += 1
             continue
         s["cls"] = cls
         s["label"] = cmap[cls]
         samples.append(s)
         labels.append(cmap[cls])
 
+    print(f"Loaded {total} raw samples | Removed {blank} blank | Kept {len(samples)}")
     return samples, np.array(labels)
 
 

@@ -13,9 +13,6 @@ class CFG:
     N_CLASSES: int = 3
 
     N_TOP_FEATURES: int = 60
-    NOISE_CONF_THRESHOLD: float = (
-        0.1  # Conservative: only remove very confident mislabels
-    )
     OPTUNA_TRIALS: int = 40
     CV_FOLDS: int = 5
     SEED: int = 62
@@ -41,34 +38,6 @@ class CFG:
 
     VAR_THRESHOLD: float = 5.49e-10
     ENSEMBLE_SEEDS: tuple = (42, 123, 456)
-
-    BLANK_SAMPLES: frozenset = frozenset(
-        {
-            "Health_hyper_12",
-            "Health_hyper_153",
-            "Health_hyper_167",
-            "Health_hyper_23",
-            "Health_hyper_26",
-            "Health_hyper_34",
-            "Health_hyper_38",
-            "Health_hyper_5",
-            "Health_hyper_97",
-            "Other_hyper_10",
-            "Other_hyper_100",
-            "Other_hyper_107",
-            "Other_hyper_115",
-            "Other_hyper_121",
-            "Other_hyper_130",
-            "Other_hyper_133",
-            "Other_hyper_136",
-            "Other_hyper_162",
-            "Other_hyper_193",
-            "Other_hyper_48",
-            "Other_hyper_52",
-            "Other_hyper_6",
-            "Other_hyper_71",
-        }
-    )
 
     @property
     def class_map(self):

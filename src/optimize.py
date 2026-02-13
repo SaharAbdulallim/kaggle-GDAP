@@ -5,46 +5,10 @@ import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import f1_score
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
-from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
 from src.config import CFG
-
-
-def detect_noisy_samples(
-    X: np.ndarray,
-    y: np.ndarray,
-    conf_threshold: float = 0.3,
-    n_folds: int = 5,
-    seed: int = 42,
-    params: dict = None,
-) -> dict:
-    """Detect mislabeled samples via OOF predictions. Samples with low confidence are noisy."""
-    X_df = _to_df(X, X.shape[1])
-    scaler = StandardScaler().set_output(transform="pandas")
-
-    model_params = (
-        params.copy()
-        if params
-        else {"n_estimators": 300, "max_depth": 4, "verbose": -1, "random_state": seed}
-    )
-    if "class_weight" in model_params:
-        model_params.pop("class_weight")
-    model_params["verbose"] = -1
-    model_params["random_state"] = seed
-
-    pipe = make_pipeline(
-        scaler,
-        LGBMClassifier(**model_params),
-    )
-    cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
-    probs = cross_val_predict(pipe, X_df, y, cv=cv, method="predict_proba")
-
-    label_conf = probs[np.arange(len(y)), y]
-    noisy_mask = label_conf < conf_threshold
-
-    return {"label_confidence": label_conf, "noisy_mask": noisy_mask}
 
 
 def _to_df(arr, n_cols):
