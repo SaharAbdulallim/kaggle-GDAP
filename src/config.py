@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 class CFG:
     ROOT: str = "./data"
     TRAIN_DIR: str = "train"
-    TEST_DIR: str = "test"
+    TEST_DIR: str = "val"
     OUT_DIR: str = "./outputs"
 
     CLASSES: tuple = ("Health", "Other", "Rust")
@@ -32,7 +32,7 @@ class CFG:
             "min_split_gain": 0.2,
             "path_smooth": 3.0,
             "extra_trees": False,
-            "class_weight": {0: 1.5, 1: 1.0, 2: 1.0},
+            "class_weight": {0: 1.8, 1: 1.0, 2: 1.8},
         }
     )
 

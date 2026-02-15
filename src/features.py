@@ -456,6 +456,80 @@ def extract(sample) -> np.ndarray:
     re_cv = band_stds[50:65] / (band_means[50:65] + EPS)
     feats.extend([re_cv.mean(), re_cv.std()])
 
+    # ---- Red-edge onset features (bands 44-59: 30% H-vs-R separation) ----
+    # The red-edge onset region is where chlorophyll stress manifests most strongly.
+    # Rust reduces reflectance here by ~30% relative to Health, while NIR stays identical.
+    # Ref: Mahlein et al., "Hyperspectral imaging for plant disease detection", Plant Methods 2012
+    re_onset = band_means[44:60]
+    re_onset_px = pixels[:, 44:60]
+    feats.extend(
+        [
+            re_onset.mean(),
+            re_onset.min(),
+            re_onset.max() - re_onset.min(),
+            re_onset.std(),
+        ]
+    )
+    # Red-edge onset normalized by NIR (controls for brightness)
+    nir_mean = band_means[80:100].mean()
+    feats.extend(
+        [
+            re_onset.mean() / (nir_mean + EPS),
+            re_onset.min() / (nir_mean + EPS),
+        ]
+    )
+    # Per-pixel red-edge onset (captures spatial variability of stress)
+    re_onset_px_mean = re_onset_px.mean(1)
+    feats.extend(
+        [
+            re_onset_px_mean.std(),
+            skew(re_onset_px_mean) if re_onset_px_mean.std() > EPS else 0.0,
+            kurtosis(re_onset_px_mean) if re_onset_px_mean.std() > EPS else 0.0,
+        ]
+    )
+
+    # Blue-violet region (bands 10-13: ~30% relative diff)
+    blue_region = band_means[10:14]
+    feats.extend(
+        [
+            blue_region.mean(),
+            blue_region.mean() / (nir_mean + EPS),
+            blue_region.mean() / (re_onset.mean() + EPS),
+        ]
+    )
+
+    # Red absorption depth (Health=0.61 vs Rust=0.69 from diagnostic)
+    # Deeper absorption = more chlorophyll-b damage from rust
+    green_px = pixels[:, 20:30].mean(1)
+    red_px = pixels[:, 35:45].mean(1)
+    nir_px_depth = pixels[:, 80:95].mean(1)
+    red_depth = ((green_px + nir_px_depth) / 2 - red_px) / (
+        (green_px + nir_px_depth) / 2 + EPS
+    )
+    feats.extend(
+        [
+            red_depth.mean(),
+            red_depth.std(),
+            np.percentile(red_depth, 25),
+            np.percentile(red_depth, 75),
+        ]
+    )
+
+    # Red-edge curvature: 2nd derivative at the inflection region
+    # Shape of the red-edge transition differs between stress types
+    re_transition = band_means[48:65]
+    d1_re = np.diff(re_transition)
+    d2_re = np.diff(d1_re)
+    feats.extend(
+        [
+            d1_re.max(),
+            d1_re.argmax(),
+            d2_re.max(),
+            d2_re.min(),
+            d2_re.std(),
+        ]
+    )
+
     # ======================== Cross-modal ========================
     if ms is not None:
         nir_ms_m = ms[:, :, 4].mean()
