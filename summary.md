@@ -189,6 +189,41 @@ Step-by-step:
 
 ---
 
+## OOF Results (5-Fold Stratified CV)
+
+Every training sample gets exactly one prediction from the fold where it was held out.
+
+| Fold | Train F1 | Val F1 | Gap | Trees |
+|---|---|---|---|---|
+| 0 | 0.8267 | 0.7017 | 0.1249 | 217 |
+| 1 | 0.8335 | 0.7088 | 0.1247 | 256 |
+| 2 | 0.7931 | 0.7105 | 0.0826 | 245 |
+| 3 | 0.7966 | 0.6863 | 0.1104 | 253 |
+| 4 | 0.8098 | 0.7306 | 0.0792 | 215 |
+| **Mean** | **0.8120** | **0.7076** | **0.1044** | |
+
+```
+              precision    recall  f1-score   support
+
+      Health       0.61      0.55      0.58       191
+       Other       0.84      0.75      0.79       186
+        Rust       0.69      0.82      0.75       200
+
+    accuracy                           0.71       577
+   macro avg       0.71      0.71      0.71       577
+weighted avg       0.71      0.71      0.71       577
+```
+
+```
+Confusion Matrix:
+          Pred_H  Pred_O  Pred_R
+  Health    106      26      59
+   Other     33     139      14
+    Rust     35       0     165
+```
+
+---
+
 ## Optuna Hyperparameter Search
 
 When `--run-optuna` is passed, Optuna's TPE sampler searches the following parameters jointly:
