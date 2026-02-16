@@ -250,6 +250,20 @@ The objective maximizes mean macro-F1 across stratified K-fold CV, with a linear
 
 ---
 
+## How LightGBM Works
+
+LightGBM (Ke et al., NeurIPS 2017) is a gradient boosting framework that builds an ensemble of decision trees sequentially. Each new tree fits the negative gradient (pseudo-residuals) of the loss function from the previous ensemble, gradually reducing the error.
+
+LightGBM grows trees **leaf-wise** (best-first) rather than level-wise. At each step it splits the leaf with the highest gain reduction, which produces deeper, more asymmetric trees that converge faster but require careful regularization (`max_depth`, `num_leaves`, `min_child_samples`) to avoid overfitting.
+
+For multiclass classification (as in this repo), LightGBM trains one tree per class per boosting round using a softmax objective, producing class probabilities directly.
+
+**Why it fits this problem**: With ~600 engineered features and ~577 samples, LightGBM's histogram binning, GOSS, and EFB handle the wide feature space efficiently. Its built-in L1/L2 regularization, leaf-count limits, and early stopping provide the overfitting control needed for small datasets.
+
+Ref: Ke et al., "LightGBM: A Highly Efficient Gradient Boosting Decision Tree", NeurIPS 2017 -- <https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html>
+
+---
+
 ## Key Design Decisions
 
 - **Feature engineering over deep learning** -- Small dataset (~hundreds of samples) with high-dimensional spectral data favors classical ML with domain-informed features.
