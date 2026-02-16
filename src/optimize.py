@@ -102,11 +102,10 @@ def evaluate(
         sel, vt, sc, Xtr, n = _build_pipeline(X[tr], y[tr], n_top, var_threshold, seed)
         Xva = _to_df(sc.transform(vt.transform(X[va][:, sel])), n)
         clf = LGBMClassifier(**params, verbose=-1, random_state=seed)
-        y_fold = y[tr]
-        _fit(clf, Xtr, y_fold, Xva, y[va], early_stop=50)
+        _fit(clf, Xtr, y[tr], Xva, y[va], early_stop=50)
         actual_trees = getattr(clf, "best_iteration_", params.get("n_estimators", 0))
         best_iters.append(actual_trees)
-        tr_f1 = f1_score(y_fold, clf.predict(Xtr), average="macro")
+        tr_f1 = f1_score(y[tr], clf.predict(Xtr), average="macro")
         preds[va] = clf.predict(Xva)
         va_f1 = f1_score(y[va], preds[va], average="macro")
         train_scores.append(tr_f1)
@@ -157,21 +156,13 @@ def run_optimization(
         )
         val_scores, train_scores = [], []
         for tr, va in skf.split(X, y):
-            fold_idx = mrmr_select(X[tr], y[tr], n_select=n_features, seed=cfg.SEED)
-            X_tr_sel, X_va_sel = X[tr][:, fold_idx], X[va][:, fold_idx]
-
-            selector = VarianceThreshold(threshold=var_threshold)
-            X_fold_filtered = selector.fit_transform(X_tr_sel)
-            X_val_filtered = selector.transform(X_va_sel)
-            y_fold = y[tr]
-
-            n = X_fold_filtered.shape[1]
-            sc = StandardScaler()
-            Xtr = _to_df(sc.fit_transform(X_fold_filtered), n)
-            Xva = _to_df(sc.transform(X_val_filtered), n)
+            sel, vt_f, sc, Xtr, n = _build_pipeline(
+                X[tr], y[tr], n_features, var_threshold, cfg.SEED
+            )
+            Xva = _to_df(sc.transform(vt_f.transform(X[va][:, sel])), n)
             clf = LGBMClassifier(**p, verbose=-1, random_state=cfg.SEED)
-            _fit(clf, Xtr, y_fold, Xva, y[va], early_stop=50)
-            train_scores.append(f1_score(y_fold, clf.predict(Xtr), average="macro"))
+            _fit(clf, Xtr, y[tr], Xva, y[va], early_stop=50)
+            train_scores.append(f1_score(y[tr], clf.predict(Xtr), average="macro"))
             val_scores.append(f1_score(y[va], clf.predict(Xva), average="macro"))
         mean_val = np.mean(val_scores)
         mean_train = np.mean(train_scores)
